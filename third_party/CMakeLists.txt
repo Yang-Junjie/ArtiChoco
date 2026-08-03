@@ -8,3 +8,14 @@ set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(spdlog EXCLUDE_FROM_ALL)
 set_target_properties(spdlog PROPERTIES FOLDER "ThirdParty")
+
+set(VMA_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(VMA EXCLUDE_FROM_ALL)
+set_target_properties(VulkanMemoryAllocator PROPERTIES FOLDER "ThirdParty")
+target_include_directories(VulkanMemoryAllocator SYSTEM INTERFACE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/VMA/include>"
+)
+target_compile_definitions(VulkanMemoryAllocator INTERFACE
+    VMA_DYNAMIC_VULKAN_FUNCTIONS=0
+    VMA_STATIC_VULKAN_FUNCTIONS=1
+)

@@ -29,17 +29,22 @@ public:
         return m_should_close;
     }
 
-    void* getPlatformWindowHandle() const override
-    {
-        return nullptr;
-    }
-
     uint32_t getWidth() const override
     {
         return m_width;
     }
 
     uint32_t getHeight() const override
+    {
+        return m_height;
+    }
+
+    uint32_t getFramebufferWidth() const override
+    {
+        return m_width;
+    }
+
+    uint32_t getFramebufferHeight() const override
     {
         return m_height;
     }

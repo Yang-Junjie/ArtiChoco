@@ -194,6 +194,8 @@ void SDLWindow::init()
         throw std::runtime_error(message);
     }
 
+    updateFramebufferSize();
+
     m_text_input_active = SDL_StartTextInput(m_window);
     if (!m_text_input_active) {
         getLogChannel().warn("Failed to start SDL text input: {}", SDL_GetError());
@@ -223,11 +225,6 @@ bool SDLWindow::shouldClose()
     return m_should_close;
 }
 
-void* SDLWindow::getPlatformWindowHandle() const
-{
-    return m_window;
-}
-
 uint32_t SDLWindow::getWidth() const
 {
     return m_info.width;
@@ -236,6 +233,16 @@ uint32_t SDLWindow::getWidth() const
 uint32_t SDLWindow::getHeight() const
 {
     return m_info.height;
+}
+
+uint32_t SDLWindow::getFramebufferWidth() const
+{
+    return m_framebuffer_width;
+}
+
+uint32_t SDLWindow::getFramebufferHeight() const
+{
+    return m_framebuffer_height;
 }
 
 void SDLWindow::resize(uint32_t width, uint32_t height)
@@ -247,6 +254,7 @@ void SDLWindow::resize(uint32_t width, uint32_t height)
 
     m_info.width = width;
     m_info.height = height;
+    updateFramebufferSize();
 }
 
 bool SDLWindow::isKeyPressed(core::KeyCode key) const
@@ -328,6 +336,26 @@ void SDLWindow::setRawMouseMotion(bool enabled)
     }
 }
 
+SDL_Window* SDLWindow::nativeHandle() const noexcept
+{
+    return m_window;
+}
+
+void SDLWindow::updateFramebufferSize()
+{
+    int width = 0;
+    int height = 0;
+    if (!SDL_GetWindowSizeInPixels(m_window, &width, &height)) {
+        getLogChannel().warn("Failed to query SDL framebuffer size: {}", SDL_GetError());
+        m_framebuffer_width = m_info.width;
+        m_framebuffer_height = m_info.height;
+        return;
+    }
+
+    m_framebuffer_width = static_cast<uint32_t>(std::max(width, 0));
+    m_framebuffer_height = static_cast<uint32_t>(std::max(height, 0));
+}
+
 void SDLWindow::handleEvent(const SDL_Event& event)
 {
     const auto dispatch = [this](core::Event& translated_event) {
@@ -362,6 +390,15 @@ void SDLWindow::handleEvent(const SDL_Event& event)
             m_info.height = static_cast<uint32_t>(std::max(event.window.data2, 0));
             core::WindowResizeEvent translated_event{m_info.width, m_info.height};
             dispatch(translated_event);
+            break;
+        }
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
+            if (event.window.windowID != m_window_id) {
+                break;
+            }
+
+            m_framebuffer_width = static_cast<uint32_t>(std::max(event.window.data1, 0));
+            m_framebuffer_height = static_cast<uint32_t>(std::max(event.window.data2, 0));
             break;
         }
         case SDL_EVENT_WINDOW_FOCUS_GAINED: {

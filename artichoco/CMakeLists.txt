@@ -6,7 +6,7 @@ endfunction()
 
 add_subdirectory(asset)
 add_subdirectory(core)
-add_subdirectory(platform)
 add_subdirectory(project)
 add_subdirectory(renderer)
+add_subdirectory(platform)
 add_subdirectory(scene)

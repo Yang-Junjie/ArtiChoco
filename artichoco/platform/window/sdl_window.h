@@ -18,9 +18,10 @@ public:
     void onUpdate() override;
     void setEventCallback(const EventCallbackFn& callback) override;
     bool shouldClose() override;
-    void* getPlatformWindowHandle() const override;
     uint32_t getWidth() const override;
     uint32_t getHeight() const override;
+    uint32_t getFramebufferWidth() const override;
+    uint32_t getFramebufferHeight() const override;
     void resize(uint32_t width, uint32_t height) override;
 
     bool isKeyPressed(core::KeyCode key) const override;
@@ -31,14 +32,19 @@ public:
     void setMousePosition(float x, float y) override;
     void setRawMouseMotion(bool enabled) override;
 
+    SDL_Window* nativeHandle() const noexcept;
+
 private:
     void handleEvent(const SDL_Event& event);
+    void updateFramebufferSize();
 
 private:
     core::WindowCreateInfo m_info;
     EventCallbackFn m_event_callback;
     SDL_Window* m_window{nullptr};
     SDL_WindowID m_window_id{0};
+    uint32_t m_framebuffer_width{0};
+    uint32_t m_framebuffer_height{0};
     core::CursorMode m_cursor_mode{core::CursorMode::Normal};
     bool m_should_close{false};
     bool m_platform_acquired{false};

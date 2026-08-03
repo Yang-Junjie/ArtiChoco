@@ -30,9 +30,10 @@ public:
     virtual void onUpdate() = 0;
     virtual void setEventCallback(const EventCallbackFn& callback) = 0;
     virtual bool shouldClose() = 0;
-    virtual void* getPlatformWindowHandle() const = 0;
     virtual uint32_t getWidth() const = 0;
     virtual uint32_t getHeight() const = 0;
+    virtual uint32_t getFramebufferWidth() const = 0;
+    virtual uint32_t getFramebufferHeight() const = 0;
     virtual void resize(uint32_t width, uint32_t height) = 0;
 };
 

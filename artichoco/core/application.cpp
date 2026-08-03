@@ -35,6 +35,18 @@ const Logger::Channel& Application::getLogChannel() const
     return *m_log_channel;
 }
 
+Window& Application::getWindow()
+{
+    ARTI_ASSERT(m_window, "Application window is null.");
+    return *m_window;
+}
+
+const Window& Application::getWindow() const
+{
+    ARTI_ASSERT(m_window, "Application window is null.");
+    return *m_window;
+}
+
 void Application::run()
 {
     ARTI_ASSERT(m_window, "Application window is null.");
@@ -107,6 +119,7 @@ void Application::shutdown()
 {
     ARTI_CORE_INFO("Application shutdown started");
 
+    m_layer_stack.detachAll();
     m_window.reset();
 
     ARTI_CORE_INFO("Application shutdown finished");

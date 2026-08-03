@@ -28,6 +28,8 @@ public:
     static Application& get();
 
     const Logger::Channel& getLogChannel() const;
+    Window& getWindow();
+    const Window& getWindow() const;
 
     void run();
     void close();
