@@ -1,0 +1,65 @@
+﻿#pragma once
+#include <cstddef>
+
+#include <memory>
+#include <vector>
+
+namespace arti::core {
+class Layer;
+
+class LayerStack {
+public:
+    LayerStack() = default;
+    ~LayerStack();
+
+    void pushLayer(std::unique_ptr<Layer> layer);
+    void pushOverlay(std::unique_ptr<Layer> overlay);
+    void popLayer(Layer* layer);
+    void popOverlay(Layer* overlay);
+    void detachAll();
+
+    std::vector<std::unique_ptr<Layer>>::iterator begin()
+    {
+        return m_layers.begin();
+    }
+
+    std::vector<std::unique_ptr<Layer>>::iterator end()
+    {
+        return m_layers.end();
+    }
+
+    std::vector<std::unique_ptr<Layer>>::reverse_iterator rbegin()
+    {
+        return m_layers.rbegin();
+    }
+
+    std::vector<std::unique_ptr<Layer>>::reverse_iterator rend()
+    {
+        return m_layers.rend();
+    }
+
+    std::vector<std::unique_ptr<Layer>>::const_iterator cbegin() const
+    {
+        return m_layers.begin();
+    }
+
+    std::vector<std::unique_ptr<Layer>>::const_iterator cend() const
+    {
+        return m_layers.end();
+    }
+
+    std::vector<std::unique_ptr<Layer>>::const_reverse_iterator crbegin() const
+    {
+        return m_layers.rbegin();
+    }
+
+    std::vector<std::unique_ptr<Layer>>::const_reverse_iterator crend() const
+    {
+        return m_layers.rend();
+    }
+
+private:
+    std::vector<std::unique_ptr<Layer>> m_layers;
+    size_t m_layer_insert_index{0};
+};
+} // namespace arti::core

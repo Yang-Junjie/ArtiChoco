@@ -1,0 +1,12 @@
+function(artichoco_configure_library target)
+    target_compile_features(${target} PUBLIC cxx_std_20)
+    target_include_directories(${target} PUBLIC "${PROJECT_SOURCE_DIR}")
+    set_target_properties(${target} PROPERTIES FOLDER "ArtiChoco")
+endfunction()
+
+add_subdirectory(asset)
+add_subdirectory(core)
+add_subdirectory(platform)
+add_subdirectory(project)
+add_subdirectory(renderer)
+add_subdirectory(scene)
