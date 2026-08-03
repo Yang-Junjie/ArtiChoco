@@ -1,12 +1,18 @@
 add_library(artichoco_renderer STATIC
+    index_buffer.cpp
     vulkan/frame_resources.cpp
     renderer_log.cpp
     slang_compiler.cpp
+    texture_2d.cpp
+    vertex_buffer.cpp
     vulkan/vulkan_allocator.cpp
     vulkan/vulkan_context.cpp
+    vulkan/vulkan_depth_buffer.cpp
     vulkan/vulkan_device.cpp
     vulkan/vulkan_pipeline.cpp
     vulkan/vulkan_shader.cpp
+    vulkan/vulkan_texture_descriptors.cpp
+    vulkan/vulkan_upload_context.cpp
     renderer.cpp
     vulkan/vulkan_surface.cpp
     vulkan/vulkan_swapchain.cpp

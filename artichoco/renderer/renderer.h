@@ -1,10 +1,15 @@
 #pragma once
 #include "artichoco/core/window.h"
+#include "index_buffer.h"
+#include "texture_2d.h"
+#include "vertex_buffer.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 
 namespace arti::renderer::vulkan {
@@ -27,6 +32,21 @@ struct RendererCreateInfo {
 #endif
 };
 
+struct DrawCommand {
+    const VertexBuffer* vertex_buffer{nullptr};
+    const IndexBuffer* index_buffer{nullptr};
+    const Texture2D* base_color_texture{nullptr};
+    uint32_t index_count{0};
+    uint32_t first_index{0};
+    int32_t vertex_offset{0};
+    std::array<float, 16> transform{
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
+};
+
 class Renderer {
 public:
     Renderer(
@@ -38,14 +58,28 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    bool renderFrame();
+    VertexBuffer createVertexBuffer(
+        std::span<const std::byte> data,
+        uint32_t vertex_count,
+        VertexBufferLayout layout);
+    IndexBuffer createIndexBuffer(
+        std::span<const std::byte> data,
+        uint32_t index_count,
+        IndexType index_type = IndexType::UInt32);
+    Texture2D createTexture2D(
+        std::span<const std::byte> rgba_pixels,
+        uint32_t width,
+        uint32_t height,
+        TextureFormat format = TextureFormat::RGBA8Srgb);
+
+    bool renderFrame(std::span<const DrawCommand> draw_commands = {});
     void requestSwapchainRecreation() noexcept;
     void setClearColor(const std::array<float, 4>& color) noexcept;
     void waitIdle() const;
 
 private:
     struct Impl;
-    std::unique_ptr<Impl> m_impl;
+    std::shared_ptr<Impl> m_impl;
 };
 
 } // namespace arti::renderer

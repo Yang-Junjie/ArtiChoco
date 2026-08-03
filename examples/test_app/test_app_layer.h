@@ -11,17 +11,28 @@ class Renderer;
 namespace arti::test_app {
 class TestAppLayer final : public core::Layer {
 public:
-    explicit TestAppLayer(bool smoke_vulkan = false, bool smoke_render = false);
+    explicit TestAppLayer(
+        bool smoke_vulkan = false,
+        bool enable_renderer = false,
+        bool smoke_render = false);
     ~TestAppLayer() override;
 
     void onAttach() override;
     void onDetach() override;
+    void onUpdate(core::Timestep delta_time) override;
     void onRender() override;
 
 private:
+    struct Mesh;
+    struct Material;
+
     bool m_smoke_vulkan{false};
+    bool m_enable_renderer{false};
     bool m_smoke_render{false};
     uint32_t m_render_frames_remaining{0};
+    float m_elapsed_time{0.0f};
     std::unique_ptr<renderer::Renderer> m_renderer;
+    std::unique_ptr<Mesh> m_mesh;
+    std::unique_ptr<Material> m_material;
 };
 } // namespace arti::test_app
