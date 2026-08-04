@@ -1,5 +1,6 @@
 #pragma once
 #include "artichoco/renderer/vertex_buffer.h"
+#include "vulkan_binding_layout.h"
 #include "vulkan_device.h"
 #include "vulkan_shader.h"
 
@@ -9,13 +10,12 @@ namespace arti::renderer::vulkan {
 
 class VulkanPipeline {
 public:
-    VulkanPipeline(
-        const VulkanDevice& device,
-        const VulkanShader& shader,
-        const VertexBufferLayout& vertex_layout,
-        vk::DescriptorSetLayout texture_layout,
-        vk::Format color_format,
-        vk::Format depth_format);
+    VulkanPipeline(const VulkanDevice& device,
+                   const VulkanShader& shader,
+                   const VertexBufferLayout& vertex_layout,
+                   const VulkanBindingLayout& binding_layout,
+                   vk::Format color_format,
+                   vk::Format depth_format);
 
     VulkanPipeline(const VulkanPipeline&) = delete;
     VulkanPipeline& operator=(const VulkanPipeline&) = delete;

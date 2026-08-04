@@ -158,6 +158,15 @@ bool VulkanSwapchain::recreate()
     return true;
 }
 
+void VulkanSwapchain::invalidate() noexcept
+{
+    m_image_views.clear();
+    m_images.clear();
+    m_swapchain = vk::raii::SwapchainKHR{nullptr};
+    m_format = vk::Format::eUndefined;
+    m_extent = vk::Extent2D{};
+}
+
 bool VulkanSwapchain::isRenderable() const noexcept
 {
     return m_extent.width > 0 && m_extent.height > 0 && !m_images.empty();

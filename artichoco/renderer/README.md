@@ -26,3 +26,28 @@ resource objects generally thread-safe.
 Renderer shutdown must happen on the render thread after producers stop creating
 new upload requests. Shutdown waits for the device, drains pending releases, and
 then tears down Vulkan objects.
+
+## Vulkan pass recording
+
+`Renderer` owns Vulkan initialization, resource uploads, frame synchronization,
+swapchain acquisition, submission, and presentation. Application rendering is
+expressed as an ordered list of `VulkanPass` objects. Before acquiring a frame,
+the renderer calls each pass with a `VulkanPassPrepareContext` so shader
+compilation and persistent resource creation cannot poison an active frame. It
+then calls each pass with a `VulkanPassContext` to record the current frame.
+
+Prepare and record contexts are non-owning, non-copyable views valid only for the
+duration of their respective calls. Passes must not store either context. A pass
+may keep the Vulkan objects it creates and narrow references, such as the logical
+device used by those objects, provided the pass is destroyed before its renderer.
+
+Passes explicitly declare Vulkan synchronization with `vk::PipelineStageFlags2`,
+`vk::AccessFlags2`, and `vk::ImageLayout`. There is currently no automatic state
+tracking or render graph. A pass which produces a resource must record the barrier
+required by the next consumer. The final pass that writes the swapchain image must
+transition it to `vk::ImageLayout::ePresentSrcKHR` before the frame is submitted.
+
+Pipeline objects, binding layouts, binding sets, and pass-owned images must outlive
+every frame that references them. Destroy or replace those objects only after the
+renderer is idle, or through a future deferred-release path designed for pass-owned
+Vulkan resources.

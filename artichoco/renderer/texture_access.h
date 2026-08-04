@@ -2,32 +2,32 @@
 #include "detail/deferred_resource_owner.h"
 #include "texture_2d.h"
 
-#include <vulkan/vulkan.hpp>
-
 #include <cstddef>
+
 #include <span>
+#include <vulkan/vulkan.hpp>
 
 namespace arti::renderer::vulkan {
 class VulkanAllocator;
-class VulkanTextureDescriptors;
+class VulkanDevice;
+class VulkanImage;
 class VulkanUploadContext;
-}
+} // namespace arti::renderer::vulkan
 
 namespace arti::renderer::detail {
 
 class TextureAccess {
 public:
-    static Texture2D create(
-        vulkan::VulkanAllocator& allocator,
-        vulkan::VulkanUploadContext& upload_context,
-        vulkan::VulkanTextureDescriptors& descriptors,
-        DeferredResourceOwnerPtr owner,
-        std::span<const std::byte> rgba_pixels,
-        uint32_t width,
-        uint32_t height,
-        TextureFormat format);
+    static Texture2D create(vulkan::VulkanAllocator& allocator,
+                            vulkan::VulkanUploadContext& upload_context,
+                            const vulkan::VulkanDevice& device,
+                            DeferredResourceOwnerPtr owner,
+                            std::span<const std::byte> rgba_pixels,
+                            uint32_t width,
+                            uint32_t height,
+                            TextureFormat format);
 
-    static vk::DescriptorSet descriptorSet(const Texture2D& texture) noexcept;
+    static const vulkan::VulkanImage& image(const Texture2D& texture) noexcept;
     static bool isOwnedBy(const Texture2D& texture, const DeferredResourceOwner* owner) noexcept;
 };
 

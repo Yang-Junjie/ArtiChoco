@@ -1,5 +1,6 @@
 #include "artichoco/renderer/renderer_log.h"
 #include "vulkan_pipeline.h"
+#include "vulkan_pipeline_layout.h"
 
 #include <array>
 #include <stdexcept>
@@ -26,18 +27,14 @@ vk::Format toVulkanFormat(VertexAttributeType type)
 VulkanPipeline::VulkanPipeline(const VulkanDevice& device,
                                const VulkanShader& shader,
                                const VertexBufferLayout& vertex_layout,
-                               vk::DescriptorSetLayout texture_layout,
+                               const VulkanBindingLayout& binding_layout,
                                vk::Format color_format,
                                vk::Format depth_format)
     : m_vertex_layout(vertex_layout),
       m_color_format(color_format),
       m_depth_format(depth_format)
 {
-    vk::PushConstantRange push_constant_range{};
-    push_constant_range.setStageFlags(vk::ShaderStageFlagBits::eVertex).setOffset(0).setSize(sizeof(float) * 16);
-    vk::PipelineLayoutCreateInfo layout_info{};
-    layout_info.setSetLayouts(texture_layout).setPushConstantRanges(push_constant_range);
-    m_layout = vk::raii::PipelineLayout{device.device(), layout_info};
+    m_layout = createPipelineLayout(device, binding_layout);
 
     const auto shader_stages = shader.stages();
     vk::VertexInputBindingDescription binding{};
@@ -95,8 +92,7 @@ VulkanPipeline::VulkanPipeline(const VulkanDevice& device,
 
     const std::array color_formats = {color_format};
     vk::PipelineRenderingCreateInfo rendering_info{};
-    rendering_info.setColorAttachmentFormats(color_formats)
-                  .setDepthAttachmentFormat(depth_format);
+    rendering_info.setColorAttachmentFormats(color_formats).setDepthAttachmentFormat(depth_format);
 
     vk::GraphicsPipelineCreateInfo pipeline_info{};
     pipeline_info.setPNext(&rendering_info)

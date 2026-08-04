@@ -18,6 +18,7 @@ public:
     VulkanSwapchain& operator=(const VulkanSwapchain&) = delete;
 
     bool recreate();
+    void invalidate() noexcept;
     bool isRenderable() const noexcept;
 
     const vk::raii::SwapchainKHR& handle() const noexcept;
