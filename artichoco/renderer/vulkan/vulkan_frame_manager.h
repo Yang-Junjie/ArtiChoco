@@ -1,10 +1,10 @@
 #pragma once
 #include "artichoco/core/window.h"
-#include "frame_resources.h"
 #include "vulkan_allocator.h"
 #include "vulkan_command_recorder.h"
 #include "vulkan_depth_buffer.h"
 #include "vulkan_device.h"
+#include "vulkan_frame_slot.h"
 #include "vulkan_surface.h"
 #include "vulkan_swapchain.h"
 
@@ -19,7 +19,7 @@ class VulkanFrameManager;
 
 class VulkanFrameContext {
 public:
-    size_t frameIndex() const noexcept;
+    size_t frameSlotIndex() const noexcept;
     uint32_t imageIndex() const noexcept;
     vk::Extent2D extent() const noexcept;
     vk::Format colorFormat() const noexcept;
@@ -35,7 +35,7 @@ private:
 
     VulkanFrameContext(const VulkanDevice& device,
                        const vk::raii::CommandBuffer& command_buffer,
-                       size_t frame_index,
+                       size_t frame_slot_index,
                        uint32_t image_index,
                        vk::Extent2D extent,
                        vk::Format color_format,
@@ -47,7 +47,7 @@ private:
                        bool acquire_suboptimal) noexcept;
 
     VulkanCommandRecorder m_commands;
-    size_t m_frame_index{0};
+    size_t m_frame_slot_index{0};
     uint32_t m_image_index{0};
     vk::Extent2D m_extent{};
     vk::Format m_color_format{vk::Format::eUndefined};
@@ -81,7 +81,7 @@ private:
 };
 
 struct VulkanFrameBeginResult {
-    std::optional<size_t> completed_frame_index;
+    std::optional<size_t> completed_frame_slot;
     std::optional<VulkanFrameToken> frame;
 };
 
@@ -101,7 +101,7 @@ public:
 
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
-    size_t frameCount() const noexcept;
+    size_t frameSlotCount() const noexcept;
 
 private:
     friend class VulkanFrameToken;
@@ -118,10 +118,10 @@ private:
     VulkanAllocator& m_allocator;
     VulkanSwapchain m_swapchain;
     std::vector<vk::raii::Semaphore> m_render_finished_semaphores;
-    std::vector<FrameResources> m_frames;
+    std::vector<VulkanFrameSlot> m_frame_slots;
     std::vector<VulkanDepthBuffer> m_depth_buffers;
-    std::vector<bool> m_frame_submitted;
-    size_t m_current_frame{0};
+    std::vector<bool> m_frame_slot_submitted;
+    size_t m_current_frame_slot{0};
     bool m_recreate_swapchain{false};
     bool m_frame_active{false};
     bool m_recovery_required{false};

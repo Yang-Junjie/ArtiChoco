@@ -1,18 +1,19 @@
 #pragma once
+
 #include "vulkan_device.h"
 
 #include <vulkan/vulkan_raii.hpp>
 
 namespace arti::renderer::vulkan {
 
-class FrameResources {
+class VulkanFrameSlot {
 public:
-    explicit FrameResources(const VulkanDevice& device);
+    explicit VulkanFrameSlot(const VulkanDevice& device);
 
-    FrameResources(const FrameResources&) = delete;
-    FrameResources& operator=(const FrameResources&) = delete;
-    FrameResources(FrameResources&&) noexcept = default;
-    FrameResources& operator=(FrameResources&&) noexcept = default;
+    VulkanFrameSlot(const VulkanFrameSlot&) = delete;
+    VulkanFrameSlot& operator=(const VulkanFrameSlot&) = delete;
+    VulkanFrameSlot(VulkanFrameSlot&&) noexcept = default;
+    VulkanFrameSlot& operator=(VulkanFrameSlot&&) noexcept = default;
 
     const vk::raii::CommandPool& commandPool() const noexcept;
     const vk::raii::CommandBuffer& commandBuffer() const noexcept;

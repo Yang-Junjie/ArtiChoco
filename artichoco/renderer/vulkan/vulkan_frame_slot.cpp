@@ -1,8 +1,10 @@
-#include "frame_resources.h"
+#include "vulkan_frame_slot.h"
+
+#include <utility>
 
 namespace arti::renderer::vulkan {
 
-FrameResources::FrameResources(const VulkanDevice& device)
+VulkanFrameSlot::VulkanFrameSlot(const VulkanDevice& device)
 {
     vk::CommandPoolCreateInfo pool_info{};
     pool_info.setFlags(vk::CommandPoolCreateFlagBits::eResetCommandBuffer)
@@ -10,9 +12,7 @@ FrameResources::FrameResources(const VulkanDevice& device)
     m_command_pool = vk::raii::CommandPool{device.device(), pool_info};
 
     vk::CommandBufferAllocateInfo allocate_info{};
-    allocate_info.setCommandPool(*m_command_pool)
-        .setLevel(vk::CommandBufferLevel::ePrimary)
-        .setCommandBufferCount(1);
+    allocate_info.setCommandPool(*m_command_pool).setLevel(vk::CommandBufferLevel::ePrimary).setCommandBufferCount(1);
     vk::raii::CommandBuffers command_buffers{device.device(), allocate_info};
     m_command_buffer = std::move(command_buffers.front());
 
@@ -23,22 +23,22 @@ FrameResources::FrameResources(const VulkanDevice& device)
     m_in_flight = vk::raii::Fence{device.device(), fence_info};
 }
 
-const vk::raii::CommandPool& FrameResources::commandPool() const noexcept
+const vk::raii::CommandPool& VulkanFrameSlot::commandPool() const noexcept
 {
     return m_command_pool;
 }
 
-const vk::raii::CommandBuffer& FrameResources::commandBuffer() const noexcept
+const vk::raii::CommandBuffer& VulkanFrameSlot::commandBuffer() const noexcept
 {
     return m_command_buffer;
 }
 
-const vk::raii::Semaphore& FrameResources::imageAvailableSemaphore() const noexcept
+const vk::raii::Semaphore& VulkanFrameSlot::imageAvailableSemaphore() const noexcept
 {
     return m_image_available;
 }
 
-const vk::raii::Fence& FrameResources::inFlightFence() const noexcept
+const vk::raii::Fence& VulkanFrameSlot::inFlightFence() const noexcept
 {
     return m_in_flight;
 }

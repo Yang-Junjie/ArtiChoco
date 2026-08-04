@@ -20,27 +20,31 @@ class VulkanDescriptorAllocator;
 class VulkanDevice;
 class VulkanFrameContext;
 class VulkanImage;
+class VulkanUploadContext;
 
 class VulkanPassPrepareContext {
 public:
     VulkanPassPrepareContext(const VulkanDevice& device,
                              VulkanAllocator& allocator,
+                             VulkanUploadContext& upload_context,
                              VulkanDescriptorAllocator& descriptor_allocator,
-                             size_t frame_count) noexcept;
+                             size_t frame_slot_count) noexcept;
 
     VulkanPassPrepareContext(const VulkanPassPrepareContext&) = delete;
     VulkanPassPrepareContext& operator=(const VulkanPassPrepareContext&) = delete;
 
     const VulkanDevice& device() const noexcept;
     VulkanAllocator& allocator() const noexcept;
+    VulkanUploadContext& uploadContext() const noexcept;
     VulkanDescriptorAllocator& descriptorAllocator() const noexcept;
-    size_t frameCount() const noexcept;
+    size_t frameSlotCount() const noexcept;
 
 private:
     const VulkanDevice& m_device;
     VulkanAllocator& m_allocator;
+    VulkanUploadContext& m_upload_context;
     VulkanDescriptorAllocator& m_descriptor_allocator;
-    size_t m_frame_count{0};
+    size_t m_frame_slot_count{0};
 };
 
 class VulkanPassContext {

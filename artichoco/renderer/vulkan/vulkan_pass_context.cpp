@@ -5,6 +5,7 @@
 #include "vulkan_device.h"
 #include "vulkan_frame_manager.h"
 #include "vulkan_pass_context.h"
+#include "vulkan_upload_context.h"
 
 #include <stdexcept>
 
@@ -12,12 +13,14 @@ namespace arti::renderer::vulkan {
 
 VulkanPassPrepareContext::VulkanPassPrepareContext(const VulkanDevice& device,
                                                    VulkanAllocator& allocator,
+                                                   VulkanUploadContext& upload_context,
                                                    VulkanDescriptorAllocator& descriptor_allocator,
-                                                   size_t frame_count) noexcept
+                                                   size_t frame_slot_count) noexcept
     : m_device(device),
       m_allocator(allocator),
+      m_upload_context(upload_context),
       m_descriptor_allocator(descriptor_allocator),
-      m_frame_count(frame_count)
+      m_frame_slot_count(frame_slot_count)
 {}
 
 const VulkanDevice& VulkanPassPrepareContext::device() const noexcept
@@ -30,14 +33,19 @@ VulkanAllocator& VulkanPassPrepareContext::allocator() const noexcept
     return m_allocator;
 }
 
+VulkanUploadContext& VulkanPassPrepareContext::uploadContext() const noexcept
+{
+    return m_upload_context;
+}
+
 VulkanDescriptorAllocator& VulkanPassPrepareContext::descriptorAllocator() const noexcept
 {
     return m_descriptor_allocator;
 }
 
-size_t VulkanPassPrepareContext::frameCount() const noexcept
+size_t VulkanPassPrepareContext::frameSlotCount() const noexcept
 {
-    return m_frame_count;
+    return m_frame_slot_count;
 }
 
 VulkanPassContext::VulkanPassContext(VulkanFrameContext& frame,

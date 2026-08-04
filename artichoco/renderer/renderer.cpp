@@ -1,3 +1,5 @@
+#include "artichoco/renderer/detail/deferred_release_queue.h"
+#include "artichoco/renderer/detail/deferred_resource_owner.h"
 #include "artichoco/renderer/renderer_log.h"
 #include "artichoco/renderer/vulkan/vulkan_allocator.h"
 #include "artichoco/renderer/vulkan/vulkan_context.h"
@@ -14,11 +16,8 @@
 #include "texture_access.h"
 
 #include <algorithm>
-#include <future>
-#include <mutex>
 #include <stdexcept>
 #include <utility>
-#include <vector>
 
 namespace arti::renderer {
 namespace {
@@ -59,9 +58,6 @@ struct Renderer::Impl final : detail::DeferredResourceOwner, std::enable_shared_
     void waitIdle() const;
 
 private:
-    void completeFrame(size_t frame_index);
-    void markFrameSubmitted(size_t frame_index);
-
     std::unique_ptr<vulkan::VulkanSurfaceSource> m_surface_source;
     vulkan::VulkanContext m_context;
     vulkan::VulkanSurface m_surface;
@@ -70,17 +66,8 @@ private:
     vulkan::VulkanUploadContext m_upload_context;
     vulkan::VulkanDescriptorAllocator m_descriptor_allocator;
     vulkan::VulkanFrameManager m_frame_manager;
+    detail::DeferredReleaseQueue m_release_queue;
     bool m_shutdown{false};
-
-    struct PendingRelease {
-        std::packaged_task<void()> release;
-        std::vector<bool> waiting_for_frames;
-        size_t remaining_frames{0};
-    };
-
-    std::mutex m_release_mutex;
-    std::vector<bool> m_frame_submitted;
-    std::vector<PendingRelease> m_pending_releases;
 };
 
 Renderer::Impl::Impl(core::Window& window,
@@ -93,10 +80,10 @@ Renderer::Impl::Impl(core::Window& window,
       m_allocator(m_context, m_device),
       m_upload_context(m_device, m_allocator),
       m_descriptor_allocator(m_device),
-      m_frame_manager(window, m_device, m_allocator, m_surface, info.frames_in_flight)
+      m_frame_manager(window, m_device, m_allocator, m_surface, info.frames_in_flight),
+      m_release_queue(m_frame_manager.frameSlotCount())
 {
-    m_frame_submitted.resize(m_frame_manager.frameCount(), false);
-    getLogChannel().info("Initialized Vulkan renderer with {} frames in flight", m_frame_manager.frameCount());
+    getLogChannel().info("Initialized Vulkan renderer with {} frames in flight", m_frame_manager.frameSlotCount());
 }
 
 Renderer::Impl::~Impl()
@@ -109,16 +96,7 @@ Renderer::Impl::~Impl()
 
 void Renderer::Impl::deferRelease(std::packaged_task<void()> release)
 {
-    std::scoped_lock lock{m_release_mutex};
-    PendingRelease pending;
-    pending.release = std::move(release);
-    pending.waiting_for_frames = m_frame_submitted;
-    pending.remaining_frames = static_cast<size_t>(std::ranges::count(m_frame_submitted, true));
-    if (m_shutdown) {
-        pending.release();
-        return;
-    }
-    m_pending_releases.push_back(std::move(pending));
+    m_release_queue.defer(std::move(release));
 }
 
 void Renderer::Impl::shutdown()
@@ -127,13 +105,8 @@ void Renderer::Impl::shutdown()
         return;
     }
     waitIdle();
-    std::scoped_lock lock{m_release_mutex};
+    m_release_queue.shutdown();
     m_shutdown = true;
-    std::ranges::fill(m_frame_submitted, false);
-    for (auto& pending : m_pending_releases) {
-        pending.release();
-    }
-    m_pending_releases.clear();
 }
 
 VertexBuffer Renderer::Impl::createVertexBuffer(std::span<const std::byte> data,
@@ -171,16 +144,17 @@ bool Renderer::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes)
     vulkan::VulkanPassPrepareContext prepare_context{
         m_device,
         m_allocator,
+        m_upload_context,
         m_descriptor_allocator,
-        m_frame_manager.frameCount(),
+        m_frame_manager.frameSlotCount(),
     };
     for (vulkan::VulkanPass* pass : passes) {
         pass->prepare(prepare_context);
     }
 
     auto begin_result = m_frame_manager.beginFrame();
-    if (begin_result.completed_frame_index) {
-        completeFrame(*begin_result.completed_frame_index);
+    if (begin_result.completed_frame_slot) {
+        m_release_queue.onFrameSlotCompleted(*begin_result.completed_frame_slot);
     }
     if (!begin_result.frame) {
         return false;
@@ -191,8 +165,8 @@ bool Renderer::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes)
     for (vulkan::VulkanPass* pass : passes) {
         pass->record(pass_context);
     }
-    const size_t submitted_frame = frame.submit();
-    markFrameSubmitted(submitted_frame);
+    const size_t submitted_frame_slot = frame.submit();
+    m_release_queue.onFrameSlotSubmitted(submitted_frame_slot);
     return true;
 }
 
@@ -204,30 +178,6 @@ void Renderer::Impl::requestSwapchainRecreation() noexcept
 void Renderer::Impl::waitIdle() const
 {
     m_frame_manager.waitIdle();
-}
-
-void Renderer::Impl::completeFrame(size_t frame_index)
-{
-    std::scoped_lock lock{m_release_mutex};
-    m_frame_submitted.at(frame_index) = false;
-    for (auto it = m_pending_releases.begin(); it != m_pending_releases.end();) {
-        if (it->waiting_for_frames.at(frame_index)) {
-            it->waiting_for_frames[frame_index] = false;
-            --it->remaining_frames;
-        }
-        if (it->remaining_frames == 0) {
-            it->release();
-            it = m_pending_releases.erase(it);
-        } else {
-            ++it;
-        }
-    }
-}
-
-void Renderer::Impl::markFrameSubmitted(size_t frame_index)
-{
-    std::scoped_lock lock{m_release_mutex};
-    m_frame_submitted.at(frame_index) = true;
 }
 
 Renderer::Renderer(core::Window& window,

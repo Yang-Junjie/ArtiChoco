@@ -26,7 +26,8 @@ VulkanUploadContext::VulkanUploadContext(const VulkanDevice& device, VulkanAlloc
 
 void VulkanUploadContext::uploadBuffer(std::span<const std::byte> data,
                                        vk::Buffer destination,
-                                       vk::AccessFlags2 destination_access)
+                                       VulkanBufferState final_state,
+                                       vk::DeviceSize destination_offset)
 {
     if (data.empty() || !destination) {
         throw std::invalid_argument("A buffer upload requires data and a destination.");
@@ -35,23 +36,24 @@ void VulkanUploadContext::uploadBuffer(std::span<const std::byte> data,
     auto staging = createStagingBuffer(data);
     beginUpload();
     VulkanCommandRecorder commands{m_device, m_command_buffer};
-    commands.handle().copyBuffer(staging.handle(), destination, vk::BufferCopy{0, 0, data.size_bytes()});
+    commands.handle().copyBuffer(
+        staging.handle(), destination, vk::BufferCopy{0, destination_offset, data.size_bytes()});
 
-    vk::BufferMemoryBarrier2 barrier{};
-    barrier.setSrcStageMask(vk::PipelineStageFlagBits2::eCopy)
-        .setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite)
-        .setDstStageMask(vk::PipelineStageFlagBits2::eVertexInput)
-        .setDstAccessMask(destination_access)
-        .setBuffer(destination)
-        .setOffset(0)
-        .setSize(data.size_bytes());
-    commands.bufferBarrier(barrier);
+    const VulkanBufferState transfer_write{
+        vk::PipelineStageFlagBits2::eCopy,
+        vk::AccessFlagBits2::eTransferWrite,
+    };
+    commands.bufferBarrier(
+        makeBufferBarrier(destination, destination_offset, data.size_bytes(), transfer_write, final_state));
     commands.end();
 
     submitAndWait();
 }
 
-void VulkanUploadContext::uploadImageRGBA8(std::span<const std::byte> data, vk::Image destination, vk::Extent2D extent)
+void VulkanUploadContext::uploadImageRGBA8(std::span<const std::byte> data,
+                                           vk::Image destination,
+                                           vk::Extent2D extent,
+                                           VulkanImageState final_state)
 {
     if (data.empty() || !destination || extent.width == 0 || extent.height == 0 ||
         data.size() != static_cast<size_t>(extent.width) * extent.height * 4) {
@@ -68,16 +70,17 @@ void VulkanUploadContext::uploadImageRGBA8(std::span<const std::byte> data, vk::
         .setLevelCount(1)
         .setBaseArrayLayer(0)
         .setLayerCount(1);
-    vk::ImageMemoryBarrier2 to_transfer{};
-    to_transfer.setSrcStageMask(vk::PipelineStageFlagBits2::eNone)
-        .setSrcAccessMask(vk::AccessFlagBits2::eNone)
-        .setDstStageMask(vk::PipelineStageFlagBits2::eCopy)
-        .setDstAccessMask(vk::AccessFlagBits2::eTransferWrite)
-        .setOldLayout(vk::ImageLayout::eUndefined)
-        .setNewLayout(vk::ImageLayout::eTransferDstOptimal)
-        .setImage(destination)
-        .setSubresourceRange(range);
-    commands.imageBarrier(to_transfer);
+    const VulkanImageState undefined{
+        vk::PipelineStageFlagBits2::eNone,
+        vk::AccessFlagBits2::eNone,
+        vk::ImageLayout::eUndefined,
+    };
+    const VulkanImageState transfer_write{
+        vk::PipelineStageFlagBits2::eCopy,
+        vk::AccessFlagBits2::eTransferWrite,
+        vk::ImageLayout::eTransferDstOptimal,
+    };
+    commands.imageBarrier(makeImageBarrier(destination, range, undefined, transfer_write));
 
     vk::ImageSubresourceLayers layers{};
     layers.setAspectMask(vk::ImageAspectFlagBits::eColor).setMipLevel(0).setBaseArrayLayer(0).setLayerCount(1);
@@ -90,16 +93,7 @@ void VulkanUploadContext::uploadImageRGBA8(std::span<const std::byte> data, vk::
         .setImageExtent({extent.width, extent.height, 1});
     commands.handle().copyBufferToImage(staging.handle(), destination, vk::ImageLayout::eTransferDstOptimal, copy);
 
-    vk::ImageMemoryBarrier2 to_shader_read{};
-    to_shader_read.setSrcStageMask(vk::PipelineStageFlagBits2::eCopy)
-        .setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite)
-        .setDstStageMask(vk::PipelineStageFlagBits2::eFragmentShader)
-        .setDstAccessMask(vk::AccessFlagBits2::eShaderSampledRead)
-        .setOldLayout(vk::ImageLayout::eTransferDstOptimal)
-        .setNewLayout(vk::ImageLayout::eShaderReadOnlyOptimal)
-        .setImage(destination)
-        .setSubresourceRange(range);
-    commands.imageBarrier(to_shader_read);
+    commands.imageBarrier(makeImageBarrier(destination, range, transfer_write, final_state));
     commands.end();
 
     submitAndWait();

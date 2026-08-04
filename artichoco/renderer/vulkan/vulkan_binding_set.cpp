@@ -1,5 +1,7 @@
 #include "vulkan_binding_set.h"
 
+#include "vulkan_buffer.h"
+
 #include <stdexcept>
 
 namespace arti::renderer::vulkan {
@@ -84,6 +86,40 @@ void VulkanBindingSet::writeCombinedImageSampler(std::string_view name,
     m_device.device().updateDescriptorSets(write, {});
 }
 
+void VulkanBindingSet::writeUniformBuffer(std::string_view name,
+                                          const VulkanBuffer& buffer,
+                                          vk::DeviceSize offset,
+                                          vk::DeviceSize range,
+                                          uint32_t array_element)
+{
+    if (!(buffer.usage() & vk::BufferUsageFlagBits::eUniformBuffer)) {
+        throw std::invalid_argument("Vulkan buffer does not have uniform-buffer usage: " + std::string{name});
+    }
+    if (offset >= buffer.size() || (range != VK_WHOLE_SIZE && (range == 0 || range > buffer.size() - offset))) {
+        throw std::out_of_range("Uniform-buffer descriptor range exceeds the Vulkan buffer: " + std::string{name});
+    }
+    const auto& binding = requireBinding(name, vk::DescriptorType::eUniformBuffer, array_element);
+    writeBufferDescriptor(
+        binding, buffer.buffer(), offset, range == VK_WHOLE_SIZE ? buffer.size() - offset : range, array_element);
+}
+
+void VulkanBindingSet::writeStorageBuffer(std::string_view name,
+                                          const VulkanBuffer& buffer,
+                                          vk::DeviceSize offset,
+                                          vk::DeviceSize range,
+                                          uint32_t array_element)
+{
+    if (!(buffer.usage() & vk::BufferUsageFlagBits::eStorageBuffer)) {
+        throw std::invalid_argument("Vulkan buffer does not have storage-buffer usage: " + std::string{name});
+    }
+    if (offset >= buffer.size() || (range != VK_WHOLE_SIZE && (range == 0 || range > buffer.size() - offset))) {
+        throw std::out_of_range("Storage-buffer descriptor range exceeds the Vulkan buffer: " + std::string{name});
+    }
+    const auto& binding = requireBinding(name, vk::DescriptorType::eStorageBuffer, array_element);
+    writeBufferDescriptor(
+        binding, buffer.buffer(), offset, range == VK_WHOLE_SIZE ? buffer.size() - offset : range, array_element);
+}
+
 void VulkanBindingSet::writeBuffer(
     std::string_view name, vk::Buffer buffer, vk::DeviceSize offset, vk::DeviceSize range, uint32_t array_element)
 {
@@ -93,6 +129,18 @@ void VulkanBindingSet::writeBuffer(
     }
     if (array_element >= binding.count) {
         throw std::out_of_range("Descriptor array element is out of range: " + std::string{name});
+    }
+    writeBufferDescriptor(binding, buffer, offset, range, array_element);
+}
+
+void VulkanBindingSet::writeBufferDescriptor(const VulkanReflectedBinding& binding,
+                                              vk::Buffer buffer,
+                                              vk::DeviceSize offset,
+                                              vk::DeviceSize range,
+                                              uint32_t array_element)
+{
+    if (!buffer || range == 0) {
+        throw std::invalid_argument("A buffer descriptor requires a buffer and a non-zero range.");
     }
     vk::DescriptorBufferInfo buffer_info{};
     buffer_info.setBuffer(buffer).setOffset(offset).setRange(range);

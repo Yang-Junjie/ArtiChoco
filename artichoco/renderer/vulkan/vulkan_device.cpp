@@ -148,9 +148,14 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
     dynamic_rendering.setDynamicRendering(true).setPNext(&synchronization2);
     vk::PhysicalDeviceVulkan11Features vulkan_11_features{};
     vulkan_11_features.setShaderDrawParameters(true).setPNext(&dynamic_rendering);
+    vk::PhysicalDeviceFeatures enabled_features{};
+    m_independent_blend_enabled = static_cast<bool>(m_physical_device.getFeatures().independentBlend);
+    enabled_features.setIndependentBlend(m_independent_blend_enabled);
 
     vk::DeviceCreateInfo device_info{};
-    device_info.setQueueCreateInfos(queue_create_infos).setPEnabledExtensionNames(extensions);
+    device_info.setQueueCreateInfos(queue_create_infos)
+        .setPEnabledExtensionNames(extensions)
+        .setPEnabledFeatures(&enabled_features);
     device_info.setPNext(&vulkan_11_features);
     m_device = vk::raii::Device{m_physical_device, device_info};
     m_graphics_queue = vk::raii::Queue{m_device, m_graphics_queue_family, 0};
@@ -198,6 +203,11 @@ uint32_t VulkanDevice::presentQueueFamily() const noexcept
 bool VulkanDevice::usesCore13() const noexcept
 {
     return m_uses_core_13;
+}
+
+bool VulkanDevice::independentBlendEnabled() const noexcept
+{
+    return m_independent_blend_enabled;
 }
 
 } // namespace arti::renderer::vulkan

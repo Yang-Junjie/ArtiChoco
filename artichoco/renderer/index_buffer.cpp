@@ -2,6 +2,7 @@
 
 #include "buffer_access.h"
 #include "vulkan/vulkan_allocator.h"
+#include "vulkan/vulkan_resource_state.h"
 #include "vulkan/vulkan_upload_context.h"
 
 #include <stdexcept>
@@ -68,7 +69,11 @@ IndexBuffer detail::BufferAccess::createIndexBuffer(
     impl->owner = owner;
     impl->index_count = index_count;
     impl->index_type = index_type;
-    upload_context.uploadBuffer(data, impl->buffer.handle(), vk::AccessFlagBits2::eIndexRead);
+    const vulkan::VulkanBufferState index_read{
+        vk::PipelineStageFlagBits2::eIndexInput,
+        vk::AccessFlagBits2::eIndexRead,
+    };
+    upload_context.uploadBuffer(data, impl->buffer.handle(), index_read);
     return IndexBuffer{std::move(impl)};
 }
 

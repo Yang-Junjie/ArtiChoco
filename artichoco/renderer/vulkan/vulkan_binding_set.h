@@ -9,6 +9,8 @@
 
 namespace arti::renderer::vulkan {
 
+class VulkanBuffer;
+
 class VulkanBindingSet {
 public:
     VulkanBindingSet(const VulkanDevice& device,
@@ -34,6 +36,16 @@ public:
                                    vk::Sampler sampler,
                                    vk::ImageLayout image_layout = vk::ImageLayout::eShaderReadOnlyOptimal,
                                    uint32_t array_element = 0);
+    void writeUniformBuffer(std::string_view name,
+                            const VulkanBuffer& buffer,
+                            vk::DeviceSize offset = 0,
+                            vk::DeviceSize range = VK_WHOLE_SIZE,
+                            uint32_t array_element = 0);
+    void writeStorageBuffer(std::string_view name,
+                            const VulkanBuffer& buffer,
+                            vk::DeviceSize offset = 0,
+                            vk::DeviceSize range = VK_WHOLE_SIZE,
+                            uint32_t array_element = 0);
     void writeBuffer(std::string_view name,
                      vk::Buffer buffer,
                      vk::DeviceSize offset,
@@ -45,6 +57,11 @@ public:
 private:
     const VulkanReflectedBinding&
         requireBinding(std::string_view name, vk::DescriptorType expected, uint32_t array_element) const;
+    void writeBufferDescriptor(const VulkanReflectedBinding& binding,
+                               vk::Buffer buffer,
+                               vk::DeviceSize offset,
+                               vk::DeviceSize range,
+                               uint32_t array_element);
 
     const VulkanDevice& m_device;
     const VulkanBindingLayout& m_layout;

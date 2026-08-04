@@ -42,14 +42,29 @@ private:
     std::unique_ptr<Impl> m_impl;
 };
 
-class TexturedMeshPass final : public renderer::vulkan::VulkanPass {
+class MrtMeshPass final : public renderer::vulkan::VulkanPass {
 public:
-    TexturedMeshPass(TextureComputePass& texture_source, const std::filesystem::path& shader_path);
-    ~TexturedMeshPass() override;
+    MrtMeshPass(TextureComputePass& texture_source, const std::filesystem::path& shader_path);
+    ~MrtMeshPass() override;
 
     void setGeometry(const renderer::VertexBuffer& vertex_buffer, const renderer::IndexBuffer& index_buffer) noexcept;
     void setTransform(const std::array<float, 16>& transform) noexcept;
     void setClearColor(const std::array<float, 4>& color) noexcept;
+    const renderer::vulkan::VulkanImage& colorOutput() const;
+    const renderer::vulkan::VulkanImage& auxiliaryOutput() const;
+    void prepare(renderer::vulkan::VulkanPassPrepareContext& context) override;
+    void record(renderer::vulkan::VulkanPassContext& context) override;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> m_impl;
+};
+
+class MrtCompositePass final : public renderer::vulkan::VulkanPass {
+public:
+    MrtCompositePass(MrtMeshPass& source, const std::filesystem::path& shader_path);
+    ~MrtCompositePass() override;
+
     void prepare(renderer::vulkan::VulkanPassPrepareContext& context) override;
     void record(renderer::vulkan::VulkanPassContext& context) override;
 

@@ -2,6 +2,7 @@
 
 #include "buffer_access.h"
 #include "vulkan/vulkan_allocator.h"
+#include "vulkan/vulkan_resource_state.h"
 #include "vulkan/vulkan_upload_context.h"
 
 #include <cstring>
@@ -103,7 +104,11 @@ VertexBuffer detail::BufferAccess::createVertexBuffer(
     impl->owner = owner;
     impl->vertex_count = vertex_count;
     impl->layout = std::move(layout);
-    upload_context.uploadBuffer(data, impl->buffer.handle(), vk::AccessFlagBits2::eVertexAttributeRead);
+    const vulkan::VulkanBufferState vertex_read{
+        vk::PipelineStageFlagBits2::eVertexAttributeInput,
+        vk::AccessFlagBits2::eVertexAttributeRead,
+    };
+    upload_context.uploadBuffer(data, impl->buffer.handle(), vertex_read);
     return VertexBuffer{std::move(impl)};
 }
 

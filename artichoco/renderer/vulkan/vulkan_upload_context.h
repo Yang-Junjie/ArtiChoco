@@ -1,11 +1,12 @@
 #pragma once
 #include "vulkan_allocator.h"
 #include "vulkan_device.h"
-
-#include <vulkan/vulkan_raii.hpp>
+#include "vulkan_resource_state.h"
 
 #include <cstddef>
+
 #include <span>
+#include <vulkan/vulkan_raii.hpp>
 
 namespace arti::renderer::vulkan {
 
@@ -16,8 +17,14 @@ public:
     VulkanUploadContext(const VulkanUploadContext&) = delete;
     VulkanUploadContext& operator=(const VulkanUploadContext&) = delete;
 
-    void uploadBuffer(std::span<const std::byte> data, vk::Buffer destination, vk::AccessFlags2 destination_access);
-    void uploadImageRGBA8(std::span<const std::byte> data, vk::Image destination, vk::Extent2D extent);
+    void uploadBuffer(std::span<const std::byte> data,
+                      vk::Buffer destination,
+                      VulkanBufferState final_state,
+                      vk::DeviceSize destination_offset = 0);
+    void uploadImageRGBA8(std::span<const std::byte> data,
+                          vk::Image destination,
+                          vk::Extent2D extent,
+                          VulkanImageState final_state);
 
 private:
     const VulkanDevice& m_device;

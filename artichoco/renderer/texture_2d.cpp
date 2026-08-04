@@ -2,6 +2,7 @@
 #include "texture_access.h"
 #include "vulkan/vulkan_allocator.h"
 #include "vulkan/vulkan_image.h"
+#include "vulkan/vulkan_resource_state.h"
 #include "vulkan/vulkan_upload_context.h"
 
 #include <limits>
@@ -96,7 +97,12 @@ Texture2D detail::TextureAccess::create(vulkan::VulkanAllocator& allocator,
     impl->width = width;
     impl->height = height;
     impl->format = format;
-    upload_context.uploadImageRGBA8(rgba_pixels, impl->image.image(), {width, height});
+    const vulkan::VulkanImageState shader_read{
+        vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eFragmentShader,
+        vk::AccessFlagBits2::eShaderSampledRead,
+        vk::ImageLayout::eShaderReadOnlyOptimal,
+    };
+    upload_context.uploadImageRGBA8(rgba_pixels, impl->image.image(), {width, height}, shader_read);
     return Texture2D{std::move(impl)};
 }
 

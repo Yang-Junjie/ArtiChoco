@@ -1,11 +1,12 @@
 add_library(artichoco_renderer STATIC
+    detail/deferred_release_queue.cpp
     index_buffer.cpp
-    vulkan/frame_resources.cpp
     renderer_log.cpp
     slang_compiler.cpp
     texture_2d.cpp
     vertex_buffer.cpp
     vulkan/vulkan_allocator.cpp
+    vulkan/vulkan_buffer.cpp
     vulkan/vulkan_binding_layout.cpp
     vulkan/vulkan_binding_set.cpp
     vulkan/vulkan_command_recorder.cpp
@@ -16,9 +17,11 @@ add_library(artichoco_renderer STATIC
     vulkan/vulkan_descriptor_allocator.cpp
     vulkan/vulkan_device.cpp
     vulkan/vulkan_frame_manager.cpp
+    vulkan/vulkan_frame_slot.cpp
     vulkan/vulkan_image.cpp
     vulkan/vulkan_pipeline.cpp
     vulkan/vulkan_pipeline_layout.cpp
+    vulkan/vulkan_resource_state.cpp
     vulkan/vulkan_pass_context.cpp
     vulkan/vulkan_shader.cpp
     vulkan/vulkan_upload_context.cpp

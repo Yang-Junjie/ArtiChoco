@@ -9,7 +9,7 @@ namespace arti::renderer::vulkan {
 
 VulkanFrameContext::VulkanFrameContext(const VulkanDevice& device,
                                        const vk::raii::CommandBuffer& command_buffer,
-                                       size_t frame_index,
+                                       size_t frame_slot_index,
                                        uint32_t image_index,
                                        vk::Extent2D extent,
                                        vk::Format color_format,
@@ -20,7 +20,7 @@ VulkanFrameContext::VulkanFrameContext(const VulkanDevice& device,
                                        vk::ImageView depth_image_view,
                                        bool acquire_suboptimal) noexcept
     : m_commands(device, command_buffer),
-      m_frame_index(frame_index),
+      m_frame_slot_index(frame_slot_index),
       m_image_index(image_index),
       m_extent(extent),
       m_color_format(color_format),
@@ -32,9 +32,9 @@ VulkanFrameContext::VulkanFrameContext(const VulkanDevice& device,
       m_acquire_suboptimal(acquire_suboptimal)
 {}
 
-size_t VulkanFrameContext::frameIndex() const noexcept
+size_t VulkanFrameContext::frameSlotIndex() const noexcept
 {
-    return m_frame_index;
+    return m_frame_slot_index;
 }
 
 uint32_t VulkanFrameContext::imageIndex() const noexcept
@@ -126,11 +126,11 @@ VulkanFrameManager::VulkanFrameManager(core::Window& window,
         throw std::invalid_argument("VulkanFrameManager requires at least one frame in flight.");
     }
 
-    m_frames.reserve(frames_in_flight);
+    m_frame_slots.reserve(frames_in_flight);
     for (uint32_t index = 0; index < frames_in_flight; ++index) {
-        m_frames.emplace_back(device);
+        m_frame_slots.emplace_back(device);
     }
-    m_frame_submitted.resize(m_frames.size(), false);
+    m_frame_slot_submitted.resize(m_frame_slots.size(), false);
     createDepthBuffers();
     createRenderFinishedSemaphores();
 }
@@ -168,21 +168,21 @@ VulkanFrameBeginResult VulkanFrameManager::beginFrame()
         return result;
     }
 
-    auto& resources = m_frames.at(m_current_frame);
-    const std::array fences = {*resources.inFlightFence()};
+    auto& frame_slot = m_frame_slots.at(m_current_frame_slot);
+    const std::array fences = {*frame_slot.inFlightFence()};
     if (m_device.device().waitForFences(fences, true, std::numeric_limits<uint64_t>::max()) != vk::Result::eSuccess) {
         throw std::runtime_error("Timed out while waiting for a Vulkan frame fence.");
     }
-    if (m_frame_submitted.at(m_current_frame)) {
-        result.completed_frame_index = m_current_frame;
-        m_frame_submitted[m_current_frame] = false;
+    if (m_frame_slot_submitted.at(m_current_frame_slot)) {
+        result.completed_frame_slot = m_current_frame_slot;
+        m_frame_slot_submitted[m_current_frame_slot] = false;
     }
 
     uint32_t image_index = 0;
     bool acquire_suboptimal = false;
     try {
         const auto acquired = m_swapchain.handle().acquireNextImage(
-            std::numeric_limits<uint64_t>::max(), *resources.imageAvailableSemaphore(), nullptr);
+            std::numeric_limits<uint64_t>::max(), *frame_slot.imageAvailableSemaphore(), nullptr);
         image_index = acquired.value;
         acquire_suboptimal = acquired.result == vk::Result::eSuboptimalKHR;
     } catch (const vk::OutOfDateKHRError&) {
@@ -193,14 +193,14 @@ VulkanFrameBeginResult VulkanFrameManager::beginFrame()
 
     m_frame_active = true;
     try {
-        resources.commandPool().reset();
-        auto& depth_buffer = m_depth_buffers.at(m_current_frame);
+        frame_slot.commandPool().reset();
+        auto& depth_buffer = m_depth_buffers.at(m_current_frame_slot);
         result.frame.emplace(VulkanFrameToken{
             *this,
             VulkanFrameContext{
                 m_device,
-                resources.commandBuffer(),
-                m_current_frame,
+                frame_slot.commandBuffer(),
+                m_current_frame_slot,
                 image_index,
                 m_swapchain.extent(),
                 m_swapchain.format(),
@@ -232,17 +232,17 @@ VulkanFrameBeginResult VulkanFrameManager::beginFrame()
 size_t VulkanFrameManager::submitAndPresent(VulkanFrameToken& frame_token)
 {
     auto& frame = frame_token.m_context;
-    if (!m_frame_active || frame.frameIndex() != m_current_frame) {
+    if (!m_frame_active || frame.frameSlotIndex() != m_current_frame_slot) {
         throw std::logic_error("Only the active Vulkan frame can be submitted.");
     }
 
     frame.commands().end();
-    auto& resources = m_frames.at(m_current_frame);
+    auto& frame_slot = m_frame_slots.at(m_current_frame_slot);
     vk::SemaphoreSubmitInfo wait_semaphore{};
-    wait_semaphore.setSemaphore(*resources.imageAvailableSemaphore())
+    wait_semaphore.setSemaphore(*frame_slot.imageAvailableSemaphore())
         .setStageMask(vk::PipelineStageFlagBits2::eColorAttachmentOutput);
     vk::CommandBufferSubmitInfo command_buffer{};
-    command_buffer.setCommandBuffer(*resources.commandBuffer());
+    command_buffer.setCommandBuffer(*frame_slot.commandBuffer());
     const auto& render_finished = m_render_finished_semaphores.at(frame.imageIndex());
     vk::SemaphoreSubmitInfo signal_semaphore{};
     signal_semaphore.setSemaphore(*render_finished).setStageMask(vk::PipelineStageFlagBits2::eAllCommands);
@@ -252,16 +252,16 @@ size_t VulkanFrameManager::submitAndPresent(VulkanFrameToken& frame_token)
         .setCommandBufferInfos(command_buffer)
         .setSignalSemaphoreInfos(signal_semaphore);
     const std::array submits = {submit_info};
-    const std::array fences = {*resources.inFlightFence()};
+    const std::array fences = {*frame_slot.inFlightFence()};
     m_device.device().resetFences(fences);
     if (m_device.usesCore13()) {
-        m_device.graphicsQueue().submit2(submits, *resources.inFlightFence());
+        m_device.graphicsQueue().submit2(submits, *frame_slot.inFlightFence());
     } else {
-        m_device.graphicsQueue().submit2KHR(submits, *resources.inFlightFence());
+        m_device.graphicsQueue().submit2KHR(submits, *frame_slot.inFlightFence());
     }
 
-    const size_t submitted_frame = m_current_frame;
-    m_frame_submitted[submitted_frame] = true;
+    const size_t submitted_frame_slot = m_current_frame_slot;
+    m_frame_slot_submitted[submitted_frame_slot] = true;
 
     const std::array wait_semaphores = {*render_finished};
     const std::array swapchains = {*m_swapchain.handle()};
@@ -277,8 +277,8 @@ size_t VulkanFrameManager::submitAndPresent(VulkanFrameToken& frame_token)
 
     frame_token.m_manager = nullptr;
     m_frame_active = false;
-    m_current_frame = (m_current_frame + 1) % m_frames.size();
-    return submitted_frame;
+    m_current_frame_slot = (m_current_frame_slot + 1) % m_frame_slots.size();
+    return submitted_frame_slot;
 }
 
 void VulkanFrameManager::abandonFrame(VulkanFrameToken& frame) noexcept
@@ -298,14 +298,14 @@ void VulkanFrameManager::abandonFrame(VulkanFrameToken& frame) noexcept
 
 void VulkanFrameManager::recoverAbandonedFrame()
 {
-    FrameResources replacement{m_device};
+    VulkanFrameSlot replacement_frame_slot{m_device};
     waitIdle();
 
-    m_frames.at(m_current_frame) = std::move(replacement);
+    m_frame_slots.at(m_current_frame_slot) = std::move(replacement_frame_slot);
     m_swapchain.invalidate();
     m_depth_buffers.clear();
     m_render_finished_semaphores.clear();
-    m_frame_submitted.at(m_current_frame) = false;
+    m_frame_slot_submitted.at(m_current_frame_slot) = false;
     m_recreate_swapchain = true;
     m_recovery_required = false;
 }
@@ -320,9 +320,9 @@ void VulkanFrameManager::waitIdle() const
     m_device.device().waitIdle();
 }
 
-size_t VulkanFrameManager::frameCount() const noexcept
+size_t VulkanFrameManager::frameSlotCount() const noexcept
 {
-    return m_frames.size();
+    return m_frame_slots.size();
 }
 
 bool VulkanFrameManager::recreateSwapchain()
@@ -347,8 +347,8 @@ void VulkanFrameManager::createDepthBuffers()
     if (!m_swapchain.isRenderable()) {
         return;
     }
-    m_depth_buffers.reserve(m_frames.size());
-    for (size_t index = 0; index < m_frames.size(); ++index) {
+    m_depth_buffers.reserve(m_frame_slots.size());
+    for (size_t index = 0; index < m_frame_slots.size(); ++index) {
         m_depth_buffers.emplace_back(m_device, m_allocator, m_swapchain.extent());
     }
 }

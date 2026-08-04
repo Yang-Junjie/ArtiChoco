@@ -123,6 +123,14 @@ void VulkanCommandRecorder::dispatch(uint32_t group_count_x, uint32_t group_coun
     m_command_buffer.dispatch(group_count_x, group_count_y, group_count_z);
 }
 
+void VulkanCommandRecorder::draw(uint32_t vertex_count,
+                                 uint32_t instance_count,
+                                 uint32_t first_vertex,
+                                 uint32_t first_instance) const
+{
+    m_command_buffer.draw(vertex_count, instance_count, first_vertex, first_instance);
+}
+
 void VulkanCommandRecorder::drawIndexed(uint32_t index_count,
                                         uint32_t instance_count,
                                         uint32_t first_index,

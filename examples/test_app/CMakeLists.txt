@@ -18,6 +18,12 @@ set(_arti_test_compute_shader
 set(_arti_test_compute_shader_output
     "${_arti_test_shader_directory}/texture_compute.slang"
 )
+set(_arti_test_composite_shader
+    "${PROJECT_SOURCE_DIR}/artichoco/renderer/shaders/mrt_composite.slang"
+)
+set(_arti_test_composite_shader_output
+    "${_arti_test_shader_directory}/mrt_composite.slang"
+)
 set(_arti_test_brownie_texture
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/brownie.png"
 )
@@ -52,16 +58,27 @@ add_custom_command(
     DEPENDS "${_arti_test_compute_shader}"
     VERBATIM
 )
+add_custom_command(
+    OUTPUT "${_arti_test_composite_shader_output}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${_arti_test_shader_directory}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${_arti_test_composite_shader}"
+        "${_arti_test_composite_shader_output}"
+    DEPENDS "${_arti_test_composite_shader}"
+    VERBATIM
+)
 add_custom_target(test_app_assets
     DEPENDS
         "${_arti_test_mesh_shader_output}"
         "${_arti_test_compute_shader_output}"
+        "${_arti_test_composite_shader_output}"
         "${_arti_test_brownie_texture_output}"
 )
 add_dependencies(test_app test_app_assets)
 target_compile_definitions(test_app PRIVATE
     ARTI_TEST_MESH_SHADER_PATH="${_arti_test_mesh_shader_output}"
     ARTI_TEST_COMPUTE_SHADER_PATH="${_arti_test_compute_shader_output}"
+    ARTI_TEST_COMPOSITE_SHADER_PATH="${_arti_test_composite_shader_output}"
     ARTI_TEST_BROWNIE_TEXTURE_PATH="${_arti_test_brownie_texture_output}"
 )
 target_include_directories(test_app SYSTEM PRIVATE

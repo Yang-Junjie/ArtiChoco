@@ -12,7 +12,8 @@ class Renderer;
 namespace arti::test_app {
 class ThrowOncePass;
 class TextureComputePass;
-class TexturedMeshPass;
+class MrtMeshPass;
+class MrtCompositePass;
 
 class TestAppLayer final : public core::Layer {
 public:
@@ -39,6 +40,7 @@ private:
     std::unique_ptr<Material> m_material;
     std::unique_ptr<ThrowOncePass> m_throw_once_pass;
     std::unique_ptr<TextureComputePass> m_texture_compute_pass;
-    std::unique_ptr<TexturedMeshPass> m_textured_mesh_pass;
+    std::unique_ptr<MrtMeshPass> m_mrt_mesh_pass;
+    std::unique_ptr<MrtCompositePass> m_mrt_composite_pass;
 };
 } // namespace arti::test_app

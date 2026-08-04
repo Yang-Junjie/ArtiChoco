@@ -124,10 +124,12 @@ void TestAppLayer::onAttach()
         }
         m_texture_compute_pass =
             std::make_unique<TextureComputePass>(m_material->base_color_texture, ARTI_TEST_COMPUTE_SHADER_PATH);
-        m_textured_mesh_pass = std::make_unique<TexturedMeshPass>(*m_texture_compute_pass, ARTI_TEST_MESH_SHADER_PATH);
+        m_mrt_mesh_pass = std::make_unique<MrtMeshPass>(*m_texture_compute_pass, ARTI_TEST_MESH_SHADER_PATH);
+        m_mrt_composite_pass =
+            std::make_unique<MrtCompositePass>(*m_mrt_mesh_pass, ARTI_TEST_COMPOSITE_SHADER_PATH);
         m_render_frames_remaining = m_smoke_render ? 5 : 0;
         core::Application::get().getLogChannel().info(
-            "Rendering textured cube demo with brownie.png ({}x{})", brownie.width, brownie.height);
+            "Rendering MRT cube demo with brownie.png ({}x{})", brownie.width, brownie.height);
         return;
     }
 
@@ -181,7 +183,8 @@ void TestAppLayer::onDetach()
     if (m_renderer) {
         m_renderer->waitIdle();
     }
-    m_textured_mesh_pass.reset();
+    m_mrt_composite_pass.reset();
+    m_mrt_mesh_pass.reset();
     m_texture_compute_pass.reset();
     m_throw_once_pass.reset();
     m_material.reset();
@@ -234,11 +237,12 @@ void TestAppLayer::onRender()
     std::memcpy(transform_values.data(), glm::value_ptr(transform), sizeof(transform));
     m_texture_compute_pass->setSource(m_material->base_color_texture);
     m_texture_compute_pass->setTime(m_elapsed_time);
-    m_textured_mesh_pass->setGeometry(m_mesh->vertex_buffer, m_mesh->index_buffer);
-    m_textured_mesh_pass->setTransform(transform_values);
-    const std::array<renderer::vulkan::VulkanPass*, 2> passes = {
+    m_mrt_mesh_pass->setGeometry(m_mesh->vertex_buffer, m_mesh->index_buffer);
+    m_mrt_mesh_pass->setTransform(transform_values);
+    const std::array<renderer::vulkan::VulkanPass*, 3> passes = {
         m_texture_compute_pass.get(),
-        m_textured_mesh_pass.get(),
+        m_mrt_mesh_pass.get(),
+        m_mrt_composite_pass.get(),
     };
     if (!m_renderer->renderFrame(passes)) {
         return;
@@ -265,7 +269,7 @@ void TestAppLayer::onRender()
         core::Application::get().getWindow().resize(960, 540);
     }
     if (--m_render_frames_remaining == 0) {
-        core::Application::get().getLogChannel().info("Vulkan textured cube smoke test passed");
+        core::Application::get().getLogChannel().info("Vulkan MRT cube smoke test passed");
         core::Application::get().close();
     }
 }
