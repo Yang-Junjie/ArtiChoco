@@ -19,3 +19,10 @@ target_compile_definitions(VulkanMemoryAllocator INTERFACE
     VMA_DYNAMIC_VULKAN_FUNCTIONS=0
     VMA_STATIC_VULKAN_FUNCTIONS=1
 )
+
+add_library(artichoco_entt INTERFACE)
+add_library(EnTT::EnTT ALIAS artichoco_entt)
+target_include_directories(artichoco_entt SYSTEM INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/entt/src"
+)
+target_compile_features(artichoco_entt INTERFACE cxx_std_20)

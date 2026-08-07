@@ -20,6 +20,7 @@ class VulkanDescriptorAllocator;
 class VulkanDevice;
 class VulkanFrameContext;
 class VulkanImage;
+class VulkanPipelineCache;
 class VulkanUploadContext;
 
 class VulkanPassPrepareContext {
@@ -28,6 +29,7 @@ public:
                              VulkanAllocator& allocator,
                              VulkanUploadContext& upload_context,
                              VulkanDescriptorAllocator& descriptor_allocator,
+                             VulkanPipelineCache& pipeline_cache,
                              size_t frame_slot_count) noexcept;
 
     VulkanPassPrepareContext(const VulkanPassPrepareContext&) = delete;
@@ -37,6 +39,7 @@ public:
     VulkanAllocator& allocator() const noexcept;
     VulkanUploadContext& uploadContext() const noexcept;
     VulkanDescriptorAllocator& descriptorAllocator() const noexcept;
+    VulkanPipelineCache& pipelineCache() const noexcept;
     size_t frameSlotCount() const noexcept;
 
 private:
@@ -44,18 +47,22 @@ private:
     VulkanAllocator& m_allocator;
     VulkanUploadContext& m_upload_context;
     VulkanDescriptorAllocator& m_descriptor_allocator;
+    VulkanPipelineCache& m_pipeline_cache;
     size_t m_frame_slot_count{0};
 };
 
 class VulkanPassContext {
 public:
-    VulkanPassContext(VulkanFrameContext& frame, const detail::DeferredResourceOwner* resource_owner) noexcept;
+    VulkanPassContext(VulkanFrameContext& frame,
+                      const detail::DeferredResourceOwner* resource_owner,
+                      VulkanPipelineCache& pipeline_cache) noexcept;
 
     VulkanPassContext(const VulkanPassContext&) = delete;
     VulkanPassContext& operator=(const VulkanPassContext&) = delete;
 
     VulkanFrameContext& frame() const noexcept;
     VulkanCommandRecorder& commands() const noexcept;
+    VulkanPipelineCache& pipelineCache() const noexcept;
     vk::Buffer buffer(const VertexBuffer& vertex_buffer) const;
     vk::Buffer buffer(const IndexBuffer& index_buffer) const;
     const VulkanImage& image(const Texture2D& texture) const;
@@ -63,6 +70,7 @@ public:
 private:
     VulkanFrameContext& m_frame;
     const detail::DeferredResourceOwner* m_resource_owner{nullptr};
+    VulkanPipelineCache& m_pipeline_cache;
 };
 
 } // namespace vulkan

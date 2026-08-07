@@ -70,9 +70,11 @@ public:
     AllocatedBuffer createBuffer(
         const vk::BufferCreateInfo& buffer_info,
         const VmaAllocationCreateInfo& allocation_info) const;
+
     AllocatedImage createImage(
         const vk::ImageCreateInfo& image_info,
         const VmaAllocationCreateInfo& allocation_info) const;
+        
     VmaAllocator handle() const noexcept;
 
 private:

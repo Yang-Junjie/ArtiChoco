@@ -1,7 +1,12 @@
 add_executable(test_app
     application.cpp
+    camera_controller_system.cpp
     image_loader.cpp
-    render_passes.cpp
+    passes/mrt_composite_pass.cpp
+    passes/mrt_mesh_pass.cpp
+    passes/texture_compute_pass.cpp
+    passes/throw_once_pass.cpp
+    render_system.cpp
     test_app_layer.cpp
 )
 
@@ -84,12 +89,16 @@ target_compile_definitions(test_app PRIVATE
 target_include_directories(test_app SYSTEM PRIVATE
     "${PROJECT_SOURCE_DIR}/third_party/stb"
 )
+target_include_directories(test_app PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/passes"
+)
 
 target_link_libraries(test_app
     PRIVATE
         ArtiChoco::Core
         ArtiChoco::Platform
         ArtiChoco::Renderer
+        ArtiChoco::Scene
         ArtiSDK::GLM
 )
 

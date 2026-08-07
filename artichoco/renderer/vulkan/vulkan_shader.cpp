@@ -2,21 +2,16 @@
 
 namespace arti::renderer::vulkan {
 
-VulkanShader::VulkanShader(
-    const VulkanDevice& device,
-    std::span<const uint32_t> vertex_spirv,
-    std::string vertex_entry_point,
-    std::span<const uint32_t> fragment_spirv,
-    std::string fragment_entry_point)
-    : m_vertex_entry_point(std::move(vertex_entry_point)),
-      m_fragment_entry_point(std::move(fragment_entry_point))
+VulkanShader::VulkanShader(const VulkanDevice& device, CompiledGraphicsProgram program)
+    : m_vertex_entry_point(std::move(program.vertex.entry_point)),
+      m_fragment_entry_point(std::move(program.fragment.entry_point))
 {
     vk::ShaderModuleCreateInfo vertex_info{};
-    vertex_info.setCode(vertex_spirv);
+    vertex_info.setCode(program.vertex.spirv);
     m_vertex_module = vk::raii::ShaderModule{device.device(), vertex_info};
 
     vk::ShaderModuleCreateInfo fragment_info{};
-    fragment_info.setCode(fragment_spirv);
+    fragment_info.setCode(program.fragment.spirv);
     m_fragment_module = vk::raii::ShaderModule{device.device(), fragment_info};
 }
 

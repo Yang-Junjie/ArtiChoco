@@ -91,6 +91,9 @@ bool VulkanSwapchain::recreate()
     const auto surface_format = chooseSurfaceFormat(formats);
     const auto present_mode = choosePresentMode(present_modes);
     const auto extent = chooseExtent(capabilities, m_window);
+    if (extent.width == 0 || extent.height == 0) {
+        return false;
+    }
     uint32_t image_count = capabilities.minImageCount + 1;
     if (capabilities.maxImageCount > 0) {
         image_count = std::min(image_count, capabilities.maxImageCount);

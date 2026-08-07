@@ -1,0 +1,138 @@
+#include "texture_compute_pass.h"
+
+#include "artichoco/renderer/slang_compiler.h"
+#include "artichoco/renderer/texture_2d.h"
+#include "artichoco/renderer/vulkan/vulkan_binding_layout.h"
+#include "artichoco/renderer/vulkan/vulkan_binding_set.h"
+#include "artichoco/renderer/vulkan/vulkan_compute_pipeline.h"
+#include "artichoco/renderer/vulkan/vulkan_compute_shader.h"
+#include "artichoco/renderer/vulkan/vulkan_frame_manager.h"
+#include "artichoco/renderer/vulkan/vulkan_image.h"
+#include "artichoco/renderer/vulkan/vulkan_pass_context.h"
+#include "artichoco/renderer/vulkan/vulkan_pipeline_cache.h"
+#include "render_pass_common.h"
+
+#include <array>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+namespace arti::test_app {
+
+struct TextureComputePass::Impl {
+    Impl(const renderer::Texture2D& source, std::filesystem::path shader_path)
+        : source(&source),
+          shader_path(std::move(shader_path))
+    {}
+
+    void initialize(renderer::vulkan::VulkanPassPrepareContext& context)
+    {
+        if (pipeline) {
+            return;
+        }
+
+        auto program = renderer::SlangCompiler::compileCompute({shader_path});
+        binding_layout = std::make_unique<renderer::vulkan::VulkanBindingLayout>(context.device(), program.reflection);
+        shader = std::make_unique<renderer::vulkan::VulkanComputeShader>(context.device(), std::move(program));
+        pipeline = &context.pipelineCache().getCompute(*shader, *binding_layout);
+        if (binding_layout->pushConstantRanges().empty()) {
+            throw std::invalid_argument("The texture compute shader requires push constants.");
+        }
+
+        binding_sets.reserve(context.frameSlotCount());
+        for (size_t index = 0; index < context.frameSlotCount(); ++index) {
+            binding_sets.emplace_back(context.device(), context.descriptorAllocator(), *binding_layout);
+        }
+    }
+
+    void ensureOutput(renderer::vulkan::VulkanPassPrepareContext& context)
+    {
+        const vk::Extent2D required_extent{source->width(), source->height()};
+        if (output && output->extent() == required_extent) {
+            return;
+        }
+        if (output) {
+            context.device().device().waitIdle();
+        }
+
+        renderer::vulkan::VulkanImageCreateInfo image_info;
+        image_info.extent = required_extent;
+        image_info.format = vk::Format::eR8G8B8A8Unorm;
+        image_info.usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled;
+        image_info.create_sampler = true;
+        output = std::make_unique<renderer::vulkan::VulkanImage>(context.device(), context.allocator(), image_info);
+        output_initialized = false;
+    }
+
+    const renderer::Texture2D* source{nullptr};
+    std::filesystem::path shader_path;
+    std::unique_ptr<renderer::vulkan::VulkanComputeShader> shader;
+    std::unique_ptr<renderer::vulkan::VulkanBindingLayout> binding_layout;
+    const renderer::vulkan::VulkanComputePipeline* pipeline{nullptr};
+    std::unique_ptr<renderer::vulkan::VulkanImage> output;
+    std::vector<renderer::vulkan::VulkanBindingSet> binding_sets;
+    float time{0.0f};
+    bool output_initialized{false};
+};
+
+TextureComputePass::TextureComputePass(const renderer::Texture2D& source, const std::filesystem::path& shader_path)
+    : m_impl(std::make_unique<Impl>(source, shader_path))
+{}
+
+TextureComputePass::~TextureComputePass() = default;
+
+void TextureComputePass::setSource(const renderer::Texture2D& source)
+{
+    m_impl->source = &source;
+}
+
+void TextureComputePass::setTime(float time) noexcept
+{
+    m_impl->time = time;
+}
+
+const renderer::vulkan::VulkanImage& TextureComputePass::output() const
+{
+    if (!m_impl->output) {
+        throw std::logic_error("TextureComputePass must be prepared before its output is used.");
+    }
+    return *m_impl->output;
+}
+
+void TextureComputePass::prepare(renderer::vulkan::VulkanPassPrepareContext& context)
+{
+    m_impl->initialize(context);
+    m_impl->ensureOutput(context);
+}
+
+void TextureComputePass::record(renderer::vulkan::VulkanPassContext& context)
+{
+    auto& frame = context.frame();
+    const auto& source_image = context.image(*m_impl->source);
+    auto& bindings = m_impl->binding_sets.at(frame.frameSlotIndex());
+    bindings.writeSampledImage("source_texture", *source_image.imageView());
+    bindings.writeSampler("source_sampler", *source_image.sampler());
+    bindings.writeStorageImage("output_texture", *m_impl->output->imageView());
+
+    const auto previous_state = m_impl->output_initialized ? fragmentSampledReadState() : undefinedImageState();
+    const auto to_compute = renderer::vulkan::makeImageBarrier(
+        m_impl->output->image(), colorSubresourceRange(), previous_state, computeStorageWriteState());
+
+    auto& commands = context.commands();
+    commands.imageBarrier(to_compute);
+    commands.bindPipeline(*m_impl->pipeline);
+    commands.bindBindingSet(*m_impl->pipeline, bindings);
+    commands.pushConstants(
+        *m_impl->pipeline->layout(), m_impl->binding_layout->pushConstantRanges().front().stageFlags, 0, m_impl->time);
+    const vk::Extent2D extent = m_impl->output->extent();
+    commands.dispatch((extent.width + m_impl->shader->groupSizeX() - 1) / m_impl->shader->groupSizeX(),
+                      (extent.height + m_impl->shader->groupSizeY() - 1) / m_impl->shader->groupSizeY(),
+                      1);
+
+    const auto to_graphics = renderer::vulkan::makeImageBarrier(
+        m_impl->output->image(), colorSubresourceRange(), computeStorageWriteState(), fragmentSampledReadState());
+    commands.imageBarrier(to_graphics);
+    m_impl->output_initialized = true;
+}
+
+} // namespace arti::test_app

@@ -1,13 +1,17 @@
 #include "application.h"
 #include "artichoco/platform/window/sdl_vulkan_surface_source.h"
-#include "artichoco/renderer/renderer.h"
+#include "artichoco/renderer/render_device.h"
 #include "artichoco/renderer/vulkan/vulkan_allocator.h"
 #include "artichoco/renderer/vulkan/vulkan_context.h"
 #include "artichoco/renderer/vulkan/vulkan_device.h"
 #include "artichoco/renderer/vulkan/vulkan_surface.h"
+#include "artichoco/scene/scene.h"
+#include "camera_controller_system.h"
 #include "image_loader.h"
-#include "render_passes.h"
+#include "render_system.h"
+#include "rotation_system.h"
 #include "test_app_layer.h"
+#include "throw_once_pass.h"
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <cstddef>
@@ -71,24 +75,6 @@ renderer::VertexBufferLayout cubeVertexLayout()
 
 } // namespace
 
-struct TestAppLayer::Mesh {
-    Mesh(renderer::VertexBuffer vertices, renderer::IndexBuffer indices)
-        : vertex_buffer(std::move(vertices)),
-          index_buffer(std::move(indices))
-    {}
-
-    renderer::VertexBuffer vertex_buffer;
-    renderer::IndexBuffer index_buffer;
-};
-
-struct TestAppLayer::Material {
-    explicit Material(renderer::Texture2D texture)
-        : base_color_texture(std::move(texture))
-    {}
-
-    renderer::Texture2D base_color_texture;
-};
-
 TestAppLayer::TestAppLayer(bool smoke_vulkan, bool enable_renderer, bool smoke_render)
     : Layer("TestAppLayer"),
       m_smoke_vulkan(smoke_vulkan),
@@ -104,29 +90,47 @@ void TestAppLayer::onAttach()
 
     if (m_enable_renderer) {
         auto surface_source = platform::createSDLVulkanSurfaceSource(core::Application::get().getWindow());
-        renderer::RendererCreateInfo renderer_info;
-        renderer_info.application_name = "Test App";
-        m_renderer = std::make_unique<renderer::Renderer>(
-            core::Application::get().getWindow(), std::move(surface_source), renderer_info);
+        renderer::RenderDeviceCreateInfo render_device_info;
+        render_device_info.application_name = "Test App";
+        m_render_device = std::make_unique<renderer::RenderDevice>(
+            core::Application::get().getWindow(), std::move(surface_source), render_device_info);
 
-        auto vertex_buffer = m_renderer->createVertexBuffer(
+        m_scene = std::make_unique<scene::Scene>();
+        m_scene->addSystem<CameraControllerSystem>(scene::SystemStage::Update);
+        m_scene->addSystem<RotationSystem>(scene::SystemStage::Update);
+        m_scene->addSystem<RenderSystem>(
+            scene::SystemStage::RenderExtract,
+            *m_render_device,
+            core::Application::get().getWindow(),
+            ARTI_TEST_COMPUTE_SHADER_PATH,
+            ARTI_TEST_MESH_SHADER_PATH,
+            ARTI_TEST_COMPOSITE_SHADER_PATH);
+
+        auto vertex_buffer = m_render_device->createVertexBuffer(
             std::as_bytes(std::span{vertices}), static_cast<uint32_t>(vertices.size()), cubeVertexLayout());
         auto index_buffer =
-            m_renderer->createIndexBuffer(std::as_bytes(std::span{indices}), static_cast<uint32_t>(indices.size()));
-        m_mesh = std::make_unique<Mesh>(std::move(vertex_buffer), std::move(index_buffer));
+            m_render_device->createIndexBuffer(std::as_bytes(std::span{indices}), static_cast<uint32_t>(indices.size()));
 
         const ImageData brownie = loadImageRGBA(ARTI_TEST_BROWNIE_TEXTURE_PATH);
-        auto texture = m_renderer->createTexture2D(
+        auto texture = m_render_device->createTexture2D(
             brownie.rgba_pixels, brownie.width, brownie.height, renderer::TextureFormat::RGBA8Srgb);
-        m_material = std::make_unique<Material>(std::move(texture));
+
+        auto cube = m_scene->createEntity("cube");
+        cube.addComponent<MeshComponent>(std::move(vertex_buffer), std::move(index_buffer));
+        cube.addComponent<MaterialComponent>(std::move(texture));
+        cube.addComponent<RotationComponent>(glm::vec3{0.7f, 1.0f, 0.35f}, 0.85f);
+        m_cube_entity = cube;
+
+        auto camera = m_scene->createEntity("camera");
+        auto& camera_transform = camera.getComponent<scene::TransformComponent>();
+        camera_transform.translation = glm::vec3{2.8f, 2.2f, 3.2f};
+        camera_transform.rotation =
+            glm::quatLookAt(glm::normalize(-camera_transform.translation), glm::vec3{0.0f, 1.0f, 0.0f});
+        camera.addComponent<CameraComponent>();
+
         if (m_smoke_render) {
             m_throw_once_pass = std::make_unique<ThrowOncePass>();
         }
-        m_texture_compute_pass =
-            std::make_unique<TextureComputePass>(m_material->base_color_texture, ARTI_TEST_COMPUTE_SHADER_PATH);
-        m_mrt_mesh_pass = std::make_unique<MrtMeshPass>(*m_texture_compute_pass, ARTI_TEST_MESH_SHADER_PATH);
-        m_mrt_composite_pass =
-            std::make_unique<MrtCompositePass>(*m_mrt_mesh_pass, ARTI_TEST_COMPOSITE_SHADER_PATH);
         m_render_frames_remaining = m_smoke_render ? 5 : 0;
         core::Application::get().getLogChannel().info(
             "Rendering MRT cube demo with brownie.png ({}x{})", brownie.width, brownie.height);
@@ -180,92 +184,81 @@ void TestAppLayer::onAttach()
 
 void TestAppLayer::onDetach()
 {
-    if (m_renderer) {
-        m_renderer->waitIdle();
+    if (m_render_device) {
+        m_render_device->waitIdle();
     }
-    m_mrt_composite_pass.reset();
-    m_mrt_mesh_pass.reset();
-    m_texture_compute_pass.reset();
-    m_throw_once_pass.reset();
-    m_material.reset();
-    m_mesh.reset();
-    m_renderer.reset();
+    m_scene.reset();
+    m_render_device.reset();
 }
 
 void TestAppLayer::onUpdate(core::Timestep delta_time)
 {
-    m_elapsed_time += delta_time.getSeconds();
+    m_delta_time = delta_time;
+    if (!m_scene) {
+        return;
+    }
+
+    scene::UpdateContext context;
+    context.deltaTime = delta_time;
+    context.fixedDeltaTime = delta_time;
+    context.frameIndex = m_frame_index;
+    m_scene->runSystems(scene::SystemStage::FixedUpdate, context);
+    m_scene->runSystems(scene::SystemStage::Update, context);
+    m_scene->runSystems(scene::SystemStage::LateUpdate, context);
 }
 
 void TestAppLayer::onRender()
 {
-    if (!m_renderer || !m_mesh || !m_material) {
+    if (!m_scene) {
         return;
     }
 
+    scene::UpdateContext context;
+    context.deltaTime = m_delta_time;
+    context.fixedDeltaTime = m_delta_time;
+    context.frameIndex = m_frame_index;
+
     if (m_throw_once_pass) {
-        const std::array<renderer::vulkan::VulkanPass*, 1> passes = {m_throw_once_pass.get()};
+        renderer::vulkan::VulkanPass* throw_pass = m_throw_once_pass.get();
+        m_scene->getSystem<RenderSystem>().prependPass(throw_pass);
         bool caught_expected_failure = false;
         try {
-            if (!m_renderer->renderFrame(passes)) {
-                return;
-            }
+            m_scene->runSystems(scene::SystemStage::RenderExtract, context);
         } catch (const std::runtime_error&) {
             if (!m_throw_once_pass->didThrow()) {
                 throw;
             }
             caught_expected_failure = true;
         }
+        m_scene->getSystem<RenderSystem>().removePass(throw_pass);
+        m_throw_once_pass.reset();
         if (!caught_expected_failure) {
             throw std::logic_error("The Vulkan frame recovery test pass did not throw.");
         }
-        m_throw_once_pass.reset();
         m_frame_recovery_awaiting_success = true;
     }
 
-    const auto& window = core::Application::get().getWindow();
-    const float aspect =
-        static_cast<float>(window.getFramebufferWidth()) / static_cast<float>(window.getFramebufferHeight());
-    const glm::mat4 model =
-        glm::rotate(glm::mat4{1.0f}, m_elapsed_time * 0.85f, glm::normalize(glm::vec3{0.7f, 1.0f, 0.35f}));
-    const glm::mat4 view = glm::lookAt(glm::vec3{2.8f, 2.2f, 3.2f}, glm::vec3{0.0f}, glm::vec3{0.0f, 1.0f, 0.0f});
-    glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-    projection[1][1] *= -1.0f;
-    const glm::mat4 transform = projection * view * model;
-
-    std::array<float, 16> transform_values;
-    std::memcpy(transform_values.data(), glm::value_ptr(transform), sizeof(transform));
-    m_texture_compute_pass->setSource(m_material->base_color_texture);
-    m_texture_compute_pass->setTime(m_elapsed_time);
-    m_mrt_mesh_pass->setGeometry(m_mesh->vertex_buffer, m_mesh->index_buffer);
-    m_mrt_mesh_pass->setTransform(transform_values);
-    const std::array<renderer::vulkan::VulkanPass*, 3> passes = {
-        m_texture_compute_pass.get(),
-        m_mrt_mesh_pass.get(),
-        m_mrt_composite_pass.get(),
-    };
-    if (!m_renderer->renderFrame(passes)) {
-        return;
-    }
+    m_scene->runSystems(scene::SystemStage::RenderExtract, context);
+    m_frame_index++;
     if (m_frame_recovery_awaiting_success) {
         core::Application::get().getLogChannel().info("Vulkan frame recording recovery smoke test passed");
         m_frame_recovery_awaiting_success = false;
     }
-
     if (!m_smoke_render) {
         return;
     }
     if (m_render_frames_remaining == 5) {
-        auto replacement_vertices = m_renderer->createVertexBuffer(
+        auto replacement_vertices = m_render_device->createVertexBuffer(
             std::as_bytes(std::span{vertices}), static_cast<uint32_t>(vertices.size()), cubeVertexLayout());
         auto replacement_indices =
-            m_renderer->createIndexBuffer(std::as_bytes(std::span{indices}), static_cast<uint32_t>(indices.size()));
-        m_mesh = std::make_unique<Mesh>(std::move(replacement_vertices), std::move(replacement_indices));
+            m_render_device->createIndexBuffer(std::as_bytes(std::span{indices}), static_cast<uint32_t>(indices.size()));
+        m_cube_entity.getComponent<MeshComponent>() = MeshComponent{std::move(replacement_vertices),
+                                                                    std::move(replacement_indices)};
 
         const ImageData brownie = loadImageRGBA(ARTI_TEST_BROWNIE_TEXTURE_PATH);
-        auto replacement_texture = m_renderer->createTexture2D(
+        auto replacement_texture = m_render_device->createTexture2D(
             brownie.rgba_pixels, brownie.width, brownie.height, renderer::TextureFormat::RGBA8Srgb);
-        m_material = std::make_unique<Material>(std::move(replacement_texture));
+        m_cube_entity.getComponent<MaterialComponent>() = MaterialComponent{std::move(replacement_texture)};
         core::Application::get().getWindow().resize(960, 540);
     }
     if (--m_render_frames_remaining == 0) {

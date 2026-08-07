@@ -1,51 +1,60 @@
 #pragma once
-#include <cstdint>
 
+#include <compare>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace arti::core {
+
 class UUID {
 public:
-    UUID();
-    explicit UUID(uint64_t uuid);
-    UUID(const UUID&) = default;
+    using Value = uint64_t;
 
-    explicit operator uint64_t() const
+    constexpr UUID() noexcept = default;
+    explicit constexpr UUID(Value value) noexcept
+        : m_value(value)
+    {}
+
+    [[nodiscard]] static UUID generate();
+    [[nodiscard]] static std::optional<UUID> fromString(std::string_view value) noexcept;
+
+    [[nodiscard]] constexpr Value value() const noexcept
     {
-        return m_uuid;
+        return m_value;
     }
 
-    bool operator==(const UUID& other) const
+    explicit constexpr operator Value() const noexcept
     {
-        return m_uuid == other.m_uuid;
+        return m_value;
     }
 
-    bool operator!=(const UUID& other) const
+    [[nodiscard]] std::string toString() const;
+
+    [[nodiscard]] constexpr bool isValid() const noexcept
     {
-        return m_uuid != other.m_uuid;
+        return m_value != 0;
     }
 
-    std::string toString() const
-    {
-        return std::to_string(m_uuid);
-    }
-
-    bool isValid() const
-    {
-        return m_uuid != 0;
-    }
+    auto operator<=>(const UUID&) const noexcept = default;
 
 private:
-    uint64_t m_uuid;
+    Value m_value{0};
 };
+
 } // namespace arti::core
 
 namespace std {
-template <> struct hash<arti::core::UUID> {
-    size_t operator()(const arti::core::UUID& uuid) const noexcept
+
+template <>
+struct hash<arti::core::UUID> {
+    size_t operator()(arti::core::UUID uuid) const noexcept
     {
-        return hash<uint64_t>{}(static_cast<uint64_t>(uuid));
+        return hash<arti::core::UUID::Value>{}(uuid.value());
     }
 };
+
 } // namespace std

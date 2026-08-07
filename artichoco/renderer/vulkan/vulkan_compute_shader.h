@@ -1,9 +1,7 @@
 #pragma once
+#include "artichoco/renderer/slang_compiler.h"
 #include "vulkan_device.h"
 
-#include <cstdint>
-
-#include <span>
 #include <string>
 #include <vulkan/vulkan_raii.hpp>
 
@@ -11,12 +9,7 @@ namespace arti::renderer::vulkan {
 
 class VulkanComputeShader {
 public:
-    VulkanComputeShader(const VulkanDevice& device,
-                        std::span<const uint32_t> spirv,
-                        std::string entry_point,
-                        uint32_t group_size_x,
-                        uint32_t group_size_y,
-                        uint32_t group_size_z);
+    VulkanComputeShader(const VulkanDevice& device, CompiledComputeProgram program);
 
     VulkanComputeShader(const VulkanComputeShader&) = delete;
     VulkanComputeShader& operator=(const VulkanComputeShader&) = delete;

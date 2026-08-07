@@ -8,11 +8,12 @@
 #include "artichoco/renderer/vulkan/vulkan_frame_manager.h"
 #include "artichoco/renderer/vulkan/vulkan_pass.h"
 #include "artichoco/renderer/vulkan/vulkan_pass_context.h"
+#include "artichoco/renderer/vulkan/vulkan_pipeline_cache.h"
 #include "artichoco/renderer/vulkan/vulkan_surface.h"
 #include "artichoco/renderer/vulkan/vulkan_surface_source.h"
 #include "artichoco/renderer/vulkan/vulkan_upload_context.h"
 #include "buffer_access.h"
-#include "renderer.h"
+#include "render_device.h"
 #include "texture_access.h"
 
 #include <algorithm>
@@ -20,17 +21,20 @@
 #include <utility>
 
 namespace arti::renderer {
+#pragma region HelperFunctions
 namespace {
 
+// ensure the VulkanSurfaceSource is not null and not transfer ownership.
 vulkan::VulkanSurfaceSource& requireSurfaceSource(const std::unique_ptr<vulkan::VulkanSurfaceSource>& source)
 {
     if (!source) {
-        throw std::invalid_argument("Renderer requires a surface source.");
+        throw std::invalid_argument("RenderDevice requires a surface source.");
     }
     return *source;
 }
 
-vulkan::VulkanContextCreateInfo makeContextCreateInfo(const RendererCreateInfo& info)
+// Create a VulkanContextCreateInfo from RenderDeviceCreateInfo
+vulkan::VulkanContextCreateInfo makeContextCreateInfo(const RenderDeviceCreateInfo& info)
 {
     vulkan::VulkanContextCreateInfo context_info;
     context_info.application_name = info.application_name;
@@ -39,23 +43,31 @@ vulkan::VulkanContextCreateInfo makeContextCreateInfo(const RendererCreateInfo& 
 }
 
 } // namespace
+#pragma endregion HelperFunctions
 
-struct Renderer::Impl final : detail::DeferredResourceOwner, std::enable_shared_from_this<Renderer::Impl> {
+#pragma region RenderDeviceImpl
+struct RenderDevice::Impl final : detail::DeferredResourceOwner, std::enable_shared_from_this<RenderDevice::Impl> {
     Impl(core::Window& window,
          std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
-         const RendererCreateInfo& info);
+         const RenderDeviceCreateInfo& info);
     ~Impl();
 
     void deferRelease(std::packaged_task<void()> release) override;
     void shutdown();
 
-    VertexBuffer createVertexBuffer(std::span<const std::byte> data, uint32_t vertex_count, VertexBufferLayout layout);
-    IndexBuffer createIndexBuffer(std::span<const std::byte> data, uint32_t index_count, IndexType index_type);
-    Texture2D
-        createTexture2D(std::span<const std::byte> rgba_pixels, uint32_t width, uint32_t height, TextureFormat format);
     bool renderFrame(std::span<vulkan::VulkanPass* const> passes);
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
+
+    VertexBuffer createVertexBuffer(std::span<const std::byte> data, 
+                                    uint32_t vertex_count, VertexBufferLayout layout);
+
+    IndexBuffer  createIndexBuffer(std::span<const std::byte> data, 
+                                   uint32_t index_count, IndexType index_type);
+
+    Texture2D    createTexture2D(std::span<const std::byte> rgba_pixels, 
+                                 uint32_t width, uint32_t height, TextureFormat format);
+    
 
 private:
     std::unique_ptr<vulkan::VulkanSurfaceSource> m_surface_source;
@@ -65,14 +77,16 @@ private:
     vulkan::VulkanAllocator m_allocator;
     vulkan::VulkanUploadContext m_upload_context;
     vulkan::VulkanDescriptorAllocator m_descriptor_allocator;
+    vulkan::VulkanPipelineCache m_pipeline_cache;
     vulkan::VulkanFrameManager m_frame_manager;
     detail::DeferredReleaseQueue m_release_queue;
     bool m_shutdown{false};
 };
 
-Renderer::Impl::Impl(core::Window& window,
+#pragma endregion RenderDeviceImpl
+RenderDevice::Impl::Impl(core::Window& window,
                      std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
-                     const RendererCreateInfo& info)
+                     const RenderDeviceCreateInfo& info)
     : m_surface_source(std::move(surface_source)),
       m_context(makeContextCreateInfo(info), requireSurfaceSource(m_surface_source)),
       m_surface(m_context.instance(), requireSurfaceSource(m_surface_source)),
@@ -80,13 +94,14 @@ Renderer::Impl::Impl(core::Window& window,
       m_allocator(m_context, m_device),
       m_upload_context(m_device, m_allocator),
       m_descriptor_allocator(m_device),
+      m_pipeline_cache(m_device),
       m_frame_manager(window, m_device, m_allocator, m_surface, info.frames_in_flight),
       m_release_queue(m_frame_manager.frameSlotCount())
 {
     getLogChannel().info("Initialized Vulkan renderer with {} frames in flight", m_frame_manager.frameSlotCount());
 }
 
-Renderer::Impl::~Impl()
+RenderDevice::Impl::~Impl()
 {
     try {
         shutdown();
@@ -94,12 +109,12 @@ Renderer::Impl::~Impl()
     }
 }
 
-void Renderer::Impl::deferRelease(std::packaged_task<void()> release)
+void RenderDevice::Impl::deferRelease(std::packaged_task<void()> release)
 {
     m_release_queue.defer(std::move(release));
 }
 
-void Renderer::Impl::shutdown()
+void RenderDevice::Impl::shutdown()
 {
     if (m_shutdown) {
         return;
@@ -109,22 +124,27 @@ void Renderer::Impl::shutdown()
     m_shutdown = true;
 }
 
-VertexBuffer Renderer::Impl::createVertexBuffer(std::span<const std::byte> data,
+#pragma region ResourceCreation
+VertexBuffer RenderDevice::Impl::createVertexBuffer(std::span<const std::byte> data,
                                                 uint32_t vertex_count,
                                                 VertexBufferLayout layout)
 {
     return detail::BufferAccess::createVertexBuffer(
-        m_allocator, m_upload_context, shared_from_this(), data, vertex_count, std::move(layout));
+               m_allocator, 
+          m_upload_context, 
+                    shared_from_this(), 
+                          data, vertex_count, 
+                   std::move(layout));
 }
 
 IndexBuffer
-    Renderer::Impl::createIndexBuffer(std::span<const std::byte> data, uint32_t index_count, IndexType index_type)
+    RenderDevice::Impl::createIndexBuffer(std::span<const std::byte> data, uint32_t index_count, IndexType index_type)
 {
     return detail::BufferAccess::createIndexBuffer(
         m_allocator, m_upload_context, shared_from_this(), data, index_count, index_type);
 }
 
-Texture2D Renderer::Impl::createTexture2D(std::span<const std::byte> rgba_pixels,
+Texture2D RenderDevice::Impl::createTexture2D(std::span<const std::byte> rgba_pixels,
                                           uint32_t width,
                                           uint32_t height,
                                           TextureFormat format)
@@ -133,12 +153,15 @@ Texture2D Renderer::Impl::createTexture2D(std::span<const std::byte> rgba_pixels
         m_allocator, m_upload_context, m_device, shared_from_this(), rgba_pixels, width, height, format);
 }
 
-bool Renderer::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes)
+#pragma endregion ResourceCreation
+
+#pragma region RenderDeviceFrame
+bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes)
 {
     if (passes.empty() || std::ranges::any_of(passes, [](const vulkan::VulkanPass* pass) {
             return pass == nullptr;
         })) {
-        throw std::invalid_argument("Renderer requires at least one valid Vulkan pass.");
+        throw std::invalid_argument("RenderDevice requires at least one valid Vulkan pass.");
     }
 
     vulkan::VulkanPassPrepareContext prepare_context{
@@ -146,6 +169,7 @@ bool Renderer::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes)
         m_allocator,
         m_upload_context,
         m_descriptor_allocator,
+        m_pipeline_cache,
         m_frame_manager.frameSlotCount(),
     };
     for (vulkan::VulkanPass* pass : passes) {
@@ -161,7 +185,7 @@ bool Renderer::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes)
     }
 
     auto& frame = *begin_result.frame;
-    vulkan::VulkanPassContext pass_context{frame.context(), this};
+    vulkan::VulkanPassContext pass_context{frame.context(), this, m_pipeline_cache};
     for (vulkan::VulkanPass* pass : passes) {
         pass->record(pass_context);
     }
@@ -170,39 +194,40 @@ bool Renderer::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes)
     return true;
 }
 
-void Renderer::Impl::requestSwapchainRecreation() noexcept
+#pragma endregion RenderDeviceFrame
+void RenderDevice::Impl::requestSwapchainRecreation() noexcept
 {
     m_frame_manager.requestSwapchainRecreation();
 }
 
-void Renderer::Impl::waitIdle() const
+void RenderDevice::Impl::waitIdle() const
 {
     m_frame_manager.waitIdle();
 }
 
-Renderer::Renderer(core::Window& window,
+RenderDevice::RenderDevice(core::Window& window,
                    std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
-                   const RendererCreateInfo& info)
+                   const RenderDeviceCreateInfo& info)
     : m_impl(std::make_shared<Impl>(window, std::move(surface_source), info))
 {}
 
-Renderer::~Renderer()
+RenderDevice::~RenderDevice()
 {
     m_impl->shutdown();
 }
 
 VertexBuffer
-    Renderer::createVertexBuffer(std::span<const std::byte> data, uint32_t vertex_count, VertexBufferLayout layout)
+    RenderDevice::createVertexBuffer(std::span<const std::byte> data, uint32_t vertex_count, VertexBufferLayout layout)
 {
     return m_impl->createVertexBuffer(data, vertex_count, std::move(layout));
 }
 
-IndexBuffer Renderer::createIndexBuffer(std::span<const std::byte> data, uint32_t index_count, IndexType index_type)
+IndexBuffer RenderDevice::createIndexBuffer(std::span<const std::byte> data, uint32_t index_count, IndexType index_type)
 {
     return m_impl->createIndexBuffer(data, index_count, index_type);
 }
 
-Texture2D Renderer::createTexture2D(std::span<const std::byte> rgba_pixels,
+Texture2D RenderDevice::createTexture2D(std::span<const std::byte> rgba_pixels,
                                     uint32_t width,
                                     uint32_t height,
                                     TextureFormat format)
@@ -210,17 +235,17 @@ Texture2D Renderer::createTexture2D(std::span<const std::byte> rgba_pixels,
     return m_impl->createTexture2D(rgba_pixels, width, height, format);
 }
 
-bool Renderer::renderFrame(std::span<vulkan::VulkanPass* const> passes)
+bool RenderDevice::renderFrame(std::span<vulkan::VulkanPass* const> passes)
 {
     return m_impl->renderFrame(passes);
 }
 
-void Renderer::requestSwapchainRecreation() noexcept
+void RenderDevice::requestSwapchainRecreation() noexcept
 {
     m_impl->requestSwapchainRecreation();
 }
 
-void Renderer::waitIdle() const
+void RenderDevice::waitIdle() const
 {
     m_impl->waitIdle();
 }

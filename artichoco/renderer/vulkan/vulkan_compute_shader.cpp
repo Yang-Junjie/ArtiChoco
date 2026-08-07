@@ -4,22 +4,18 @@
 
 namespace arti::renderer::vulkan {
 
-VulkanComputeShader::VulkanComputeShader(const VulkanDevice& device,
-                                         std::span<const uint32_t> spirv,
-                                         std::string entry_point,
-                                         uint32_t group_size_x,
-                                         uint32_t group_size_y,
-                                         uint32_t group_size_z)
-    : m_entry_point(std::move(entry_point)),
-      m_group_size_x(group_size_x),
-      m_group_size_y(group_size_y),
-      m_group_size_z(group_size_z)
+VulkanComputeShader::VulkanComputeShader(const VulkanDevice& device, CompiledComputeProgram program)
+    : m_entry_point(std::move(program.compute.entry_point)),
+      m_group_size_x(program.thread_group_size_x),
+      m_group_size_y(program.thread_group_size_y),
+      m_group_size_z(program.thread_group_size_z)
 {
-    if (spirv.empty() || m_entry_point.empty() || group_size_x == 0 || group_size_y == 0 || group_size_z == 0) {
+    if (program.compute.spirv.empty() || m_entry_point.empty() || m_group_size_x == 0 || m_group_size_y == 0 ||
+        m_group_size_z == 0) {
         throw std::invalid_argument("A compute shader requires SPIR-V, an entry point, and a non-zero group size.");
     }
     vk::ShaderModuleCreateInfo create_info{};
-    create_info.setCode(spirv);
+    create_info.setCode(program.compute.spirv);
     m_module = vk::raii::ShaderModule{device.device(), create_info};
 }
 

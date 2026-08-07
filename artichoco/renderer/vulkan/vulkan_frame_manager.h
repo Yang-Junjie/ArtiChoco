@@ -53,8 +53,8 @@ private:
     vk::Format m_color_format{vk::Format::eUndefined};
     vk::Format m_depth_format{vk::Format::eUndefined};
     vk::Image m_color_image{};
-    vk::ImageView m_color_image_view{};
     vk::Image m_depth_image{};
+    vk::ImageView m_color_image_view{};
     vk::ImageView m_depth_image_view{};
     bool m_acquire_suboptimal{false};
 };

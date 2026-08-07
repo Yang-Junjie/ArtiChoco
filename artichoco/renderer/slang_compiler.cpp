@@ -141,16 +141,13 @@ void logReflection(const ShaderReflection& reflection)
     }
 }
 
-} // namespace
+struct CompileContext {
+    Slang::ComPtr<slang::ISession> session;
+    Slang::ComPtr<slang::IModule> module;
+};
 
-CompiledGraphicsProgram SlangCompiler::compileGraphics(const std::filesystem::path& source_path,
-                                                       std::string vertex_entry_point,
-                                                       std::string fragment_entry_point)
+CompileContext createCompileContext(const std::filesystem::path& source_path)
 {
-    if (source_path.empty()) {
-        throw std::invalid_argument("A Slang shader source path is required.");
-    }
-
     Slang::ComPtr<slang::IGlobalSession> global_session;
     checkSlangResult(slang::createGlobalSession(global_session.writeRef()), "slang::createGlobalSession");
 
@@ -171,34 +168,48 @@ CompiledGraphicsProgram SlangCompiler::compileGraphics(const std::filesystem::pa
     session_desc.searchPathCount = 1;
     session_desc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
 
-    Slang::ComPtr<slang::ISession> session;
-    checkSlangResult(global_session->createSession(session_desc, session.writeRef()), "IGlobalSession::createSession");
+    CompileContext context;
+    checkSlangResult(
+        global_session->createSession(session_desc, context.session.writeRef()), "IGlobalSession::createSession");
 
     const std::string source = readSource(source_path);
     const std::string module_name = source_path.stem().string();
     const std::string source_name = source_path.string();
     Slang::ComPtr<slang::IBlob> diagnostics;
-    Slang::ComPtr<slang::IModule> module;
-    module = session->loadModuleFromSourceString(
+    context.module = context.session->loadModuleFromSourceString(
         module_name.c_str(), source_name.c_str(), source.c_str(), diagnostics.writeRef());
-    reportDiagnostics(diagnostics, module.get() == nullptr);
-    if (!module) {
+    reportDiagnostics(diagnostics, context.module.get() == nullptr);
+    if (!context.module) {
         throw std::runtime_error("Slang failed to load shader module: " + source_path.string());
     }
+    return context;
+}
 
+} // namespace
+
+CompiledGraphicsProgram SlangCompiler::compileGraphics(const GraphicsShaderCompileInfo& info)
+{
+    if (info.source_path.empty()) {
+        throw std::invalid_argument("A Slang shader source path is required.");
+    }
+
+    CompileContext context = createCompileContext(info.source_path);
+
+    Slang::ComPtr<slang::IBlob> diagnostics;
     Slang::ComPtr<slang::IEntryPoint> vertex_entry;
     diagnostics.setNull();
-    checkSlangResult(module->findEntryPointByName(vertex_entry_point.c_str(), vertex_entry.writeRef()),
+    checkSlangResult(context.module->findEntryPointByName(info.vertex_entry_point.c_str(), vertex_entry.writeRef()),
                      "IModule::findEntryPointByName(vertex)");
 
     Slang::ComPtr<slang::IEntryPoint> fragment_entry;
-    checkSlangResult(module->findEntryPointByName(fragment_entry_point.c_str(), fragment_entry.writeRef()),
+    checkSlangResult(context.module->findEntryPointByName(info.fragment_entry_point.c_str(), fragment_entry.writeRef()),
                      "IModule::findEntryPointByName(fragment)");
 
-    slang::IComponentType* components[] = {module.get(), vertex_entry.get(), fragment_entry.get()};
+    slang::IComponentType* components[] = {context.module.get(), vertex_entry.get(), fragment_entry.get()};
     Slang::ComPtr<slang::IComponentType> composite;
     diagnostics.setNull();
-    checkSlangResult(session->createCompositeComponentType(components, 3, composite.writeRef(), diagnostics.writeRef()),
+    checkSlangResult(context.session->createCompositeComponentType(
+                         components, 3, composite.writeRef(), diagnostics.writeRef()),
                      "ISession::createCompositeComponentType",
                      diagnostics);
 
@@ -232,61 +243,29 @@ CompiledGraphicsProgram SlangCompiler::compileGraphics(const std::filesystem::pa
     }
     program.reflection = reflectProgram(*layout, ShaderStageMask::Vertex | ShaderStageMask::Fragment);
     logReflection(program.reflection);
-    getLogChannel().info("Compiled Slang shader '{}' to SPIR-V", source_path.string());
+    getLogChannel().info("Compiled Slang shader '{}' to SPIR-V", info.source_path.string());
     return program;
 }
 
-CompiledComputeProgram SlangCompiler::compileCompute(const std::filesystem::path& source_path,
-                                                     std::string compute_entry_point)
+CompiledComputeProgram SlangCompiler::compileCompute(const ComputeShaderCompileInfo& info)
 {
-    if (source_path.empty()) {
+    if (info.source_path.empty()) {
         throw std::invalid_argument("A Slang compute shader source path is required.");
     }
 
-    Slang::ComPtr<slang::IGlobalSession> global_session;
-    checkSlangResult(slang::createGlobalSession(global_session.writeRef()), "slang::createGlobalSession");
+    CompileContext context = createCompileContext(info.source_path);
 
-    slang::TargetDesc target_desc{};
-    target_desc.format = SLANG_SPIRV;
-    target_desc.profile = global_session->findProfile("spirv_1_6");
-    target_desc.flags = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
-    if (target_desc.profile == SLANG_PROFILE_UNKNOWN) {
-        throw std::runtime_error("Slang does not provide the spirv_1_6 profile.");
-    }
-
-    const std::string search_path = source_path.parent_path().string();
-    const char* search_paths[] = {search_path.c_str()};
-    slang::SessionDesc session_desc{};
-    session_desc.targets = &target_desc;
-    session_desc.targetCount = 1;
-    session_desc.searchPaths = search_paths;
-    session_desc.searchPathCount = 1;
-    session_desc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
-
-    Slang::ComPtr<slang::ISession> session;
-    checkSlangResult(global_session->createSession(session_desc, session.writeRef()), "IGlobalSession::createSession");
-
-    const std::string source = readSource(source_path);
-    const std::string module_name = source_path.stem().string();
-    const std::string source_name = source_path.string();
     Slang::ComPtr<slang::IBlob> diagnostics;
-    Slang::ComPtr<slang::IModule> module;
-    module = session->loadModuleFromSourceString(
-        module_name.c_str(), source_name.c_str(), source.c_str(), diagnostics.writeRef());
-    reportDiagnostics(diagnostics, module.get() == nullptr);
-    if (!module) {
-        throw std::runtime_error("Slang failed to load compute shader module: " + source_path.string());
-    }
-
     Slang::ComPtr<slang::IEntryPoint> compute_entry;
     diagnostics.setNull();
-    checkSlangResult(module->findEntryPointByName(compute_entry_point.c_str(), compute_entry.writeRef()),
+    checkSlangResult(context.module->findEntryPointByName(info.compute_entry_point.c_str(), compute_entry.writeRef()),
                      "IModule::findEntryPointByName(compute)");
 
-    slang::IComponentType* components[] = {module.get(), compute_entry.get()};
+    slang::IComponentType* components[] = {context.module.get(), compute_entry.get()};
     Slang::ComPtr<slang::IComponentType> composite;
     diagnostics.setNull();
-    checkSlangResult(session->createCompositeComponentType(components, 2, composite.writeRef(), diagnostics.writeRef()),
+    checkSlangResult(context.session->createCompositeComponentType(
+                         components, 2, composite.writeRef(), diagnostics.writeRef()),
                      "ISession::createCompositeComponentType(compute)",
                      diagnostics);
 
@@ -319,7 +298,7 @@ CompiledComputeProgram SlangCompiler::compileCompute(const std::filesystem::path
     program.thread_group_size_y = static_cast<uint32_t>(group_size[1]);
     program.thread_group_size_z = static_cast<uint32_t>(group_size[2]);
     logReflection(program.reflection);
-    getLogChannel().info("Compiled Slang compute shader '{}' to SPIR-V", source_path.string());
+    getLogChannel().info("Compiled Slang compute shader '{}' to SPIR-V", info.source_path.string());
     return program;
 }
 

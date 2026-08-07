@@ -18,7 +18,7 @@ class VulkanSurfaceSource;
 
 namespace arti::renderer {
 
-struct RendererCreateInfo {
+struct RenderDeviceCreateInfo {
     std::string application_name{"ArtiChoco"};
     uint32_t frames_in_flight{2};
 #if defined(NDEBUG)
@@ -28,24 +28,26 @@ struct RendererCreateInfo {
 #endif
 };
 
-class Renderer {
+class RenderDevice {
 public:
-    Renderer(core::Window& window,
-             std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
-             const RendererCreateInfo& info = {});
-    ~Renderer();
+    RenderDevice(core::Window& window,
+                 std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
+                 const RenderDeviceCreateInfo& info = {});
+    ~RenderDevice();
 
-    Renderer(const Renderer&) = delete;
-    Renderer& operator=(const Renderer&) = delete;
+    RenderDevice(const RenderDevice&) = delete;
+    RenderDevice& operator=(const RenderDevice&) = delete;
 
     VertexBuffer createVertexBuffer(std::span<const std::byte> data, uint32_t vertex_count, VertexBufferLayout layout);
-    IndexBuffer createIndexBuffer(std::span<const std::byte> data,
-                                  uint32_t index_count,
-                                  IndexType index_type = IndexType::UInt32);
-    Texture2D createTexture2D(std::span<const std::byte> rgba_pixels,
-                              uint32_t width,
-                              uint32_t height,
-                              TextureFormat format = TextureFormat::RGBA8Srgb);
+
+    IndexBuffer  createIndexBuffer(std::span<const std::byte> data,
+                                   uint32_t index_count,
+                                   IndexType index_type = IndexType::UInt32);
+                                   
+    Texture2D    createTexture2D(std::span<const std::byte> rgba_pixels,
+                                 uint32_t width,
+                                 uint32_t height,
+                                 TextureFormat format = TextureFormat::RGBA8Srgb);
 
     bool renderFrame(std::span<vulkan::VulkanPass* const> passes);
     void requestSwapchainRecreation() noexcept;

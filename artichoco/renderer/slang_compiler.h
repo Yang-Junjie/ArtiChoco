@@ -70,13 +70,21 @@ struct CompiledComputeProgram {
     uint32_t thread_group_size_z{1};
 };
 
+struct GraphicsShaderCompileInfo {
+    std::filesystem::path source_path;
+    std::string vertex_entry_point{"vertexMain"};
+    std::string fragment_entry_point{"fragmentMain"};
+};
+
+struct ComputeShaderCompileInfo {
+    std::filesystem::path source_path;
+    std::string compute_entry_point{"computeMain"};
+};
+
 class SlangCompiler {
 public:
-    static CompiledGraphicsProgram compileGraphics(const std::filesystem::path& source_path,
-                                                   std::string vertex_entry_point,
-                                                   std::string fragment_entry_point);
-    static CompiledComputeProgram compileCompute(const std::filesystem::path& source_path,
-                                                 std::string compute_entry_point);
+    static CompiledGraphicsProgram compileGraphics(const GraphicsShaderCompileInfo& info);
+    static CompiledComputeProgram compileCompute(const ComputeShaderCompileInfo& info);
 };
 
 } // namespace arti::renderer
