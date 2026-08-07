@@ -43,4 +43,19 @@ struct TransformComponent {
         return transform;
     }
 };
+
+struct ParentComponent {
+    core::UUID parent_id{};
+
+    ParentComponent() = default;
+
+    explicit ParentComponent(core::UUID parent_id)
+        : parent_id(parent_id)
+    {}
+};
+
+struct WorldTransformComponent {
+    glm::mat4 world{1.0f};
+    bool dirty{true};
+};
 } // namespace arti::scene

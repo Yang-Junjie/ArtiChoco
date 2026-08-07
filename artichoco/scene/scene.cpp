@@ -76,6 +76,8 @@ Entity Scene::createEntityWithUUID(core::UUID id, std::string tag)
         m_registry.emplace<IDComponent>(handle, id);
         m_registry.emplace<TagComponent>(handle, std::move(tag));
         m_registry.emplace<TransformComponent>(handle);
+        m_registry.emplace<ParentComponent>(handle);
+        m_registry.emplace<WorldTransformComponent>(handle);
         const auto [_, inserted] = m_entity_lookup.emplace(id, handle);
         if (!inserted) {
             throw std::logic_error("Failed to index the Entity UUID.");
@@ -92,8 +94,139 @@ void Scene::destroyEntity(Entity entity)
     if (!isValid(entity)) {
         throw std::invalid_argument("The Entity does not belong to this Scene or is no longer valid.");
     }
-    m_entity_lookup.erase(entity.getUUID());
-    m_registry.destroy(entity.m_handle);
+
+    std::vector<entt::entity> subtree;
+    collectSubtree(entity.m_handle, subtree);
+    for (auto it = subtree.rbegin(); it != subtree.rend(); ++it) {
+        const core::UUID id = m_registry.get<IDComponent>(*it).id;
+        m_entity_lookup.erase(id);
+        m_registry.destroy(*it);
+    }
+}
+
+void Scene::setParent(Entity child, Entity parent)
+{
+    if (!isValid(child) || !isValid(parent)) {
+        throw std::invalid_argument("The Entity does not belong to this Scene or is no longer valid.");
+    }
+    if (child.m_handle == parent.m_handle) {
+        throw std::invalid_argument("An Entity cannot be its own parent.");
+    }
+
+    for (entt::entity cursor = parent.m_handle; cursor != entt::null;) {
+        if (cursor == child.m_handle) {
+            throw std::invalid_argument("The requested parent relationship would create a cycle.");
+        }
+        const auto& parent_component = m_registry.get<ParentComponent>(cursor);
+        if (!parent_component.parent_id.isValid()) {
+            break;
+        }
+        cursor = resolveEntity(parent_component.parent_id);
+    }
+
+    m_registry.get<ParentComponent>(child.m_handle).parent_id = parent.getUUID();
+    updateWorldTransform(child.m_handle);
+}
+
+void Scene::detachFromParent(Entity entity)
+{
+    if (!isValid(entity)) {
+        throw std::invalid_argument("The Entity does not belong to this Scene or is no longer valid.");
+    }
+    m_registry.get<ParentComponent>(entity.m_handle).parent_id = {};
+    updateWorldTransform(entity.m_handle);
+}
+
+Entity Scene::getParent(Entity entity) noexcept
+{
+    if (!isValid(entity)) {
+        return {};
+    }
+    const auto& parent = m_registry.get<ParentComponent>(entity.m_handle);
+    if (!parent.parent_id.isValid()) {
+        return {};
+    }
+    const entt::entity parent_handle = resolveEntity(parent.parent_id);
+    if (parent_handle == entt::null) {
+        return {};
+    }
+    return Entity{parent_handle, m_registry};
+}
+
+std::vector<Entity> Scene::getChildren(Entity entity)
+{
+    std::vector<Entity> children;
+    if (!isValid(entity)) {
+        return children;
+    }
+
+    const core::UUID id = entity.getUUID();
+    for (auto [handle, parent] : m_registry.view<ParentComponent>().each()) {
+        if (parent.parent_id == id) {
+            children.push_back(Entity{handle, m_registry});
+        }
+    }
+    return children;
+}
+
+const glm::mat4& Scene::getWorldTransform(Entity entity) const
+{
+    if (!isValid(entity)) {
+        throw std::invalid_argument("The Entity does not belong to this Scene or is no longer valid.");
+    }
+    return std::as_const(m_registry).get<WorldTransformComponent>(entity.m_handle).world;
+}
+
+void Scene::updateWorldTransforms()
+{
+    for (auto [entity, transform, world, parent] :
+         m_registry.view<TransformComponent, WorldTransformComponent, ParentComponent>().each()) {
+        updateWorldTransform(entity);
+    }
+}
+
+entt::entity Scene::resolveEntity(const core::UUID& id) const noexcept
+{
+    const auto found = m_entity_lookup.find(id);
+    if (found == m_entity_lookup.end() || !m_registry.valid(found->second)) {
+        return entt::null;
+    }
+    return found->second;
+}
+
+void Scene::updateWorldTransform(entt::entity entity)
+{
+    auto& transform = m_registry.get<TransformComponent>(entity);
+    auto& world = m_registry.get<WorldTransformComponent>(entity);
+
+    const auto& parent = m_registry.get<ParentComponent>(entity);
+    if (!parent.parent_id.isValid()) {
+        world.world = transform.getTransform();
+        world.dirty = false;
+        return;
+    }
+
+    const entt::entity parent_handle = resolveEntity(parent.parent_id);
+    if (parent_handle == entt::null) {
+        world.world = transform.getTransform();
+        world.dirty = false;
+        return;
+    }
+
+    updateWorldTransform(parent_handle);
+    world.world = m_registry.get<WorldTransformComponent>(parent_handle).world * transform.getTransform();
+    world.dirty = false;
+}
+
+void Scene::collectSubtree(entt::entity root, std::vector<entt::entity>& subtree) const
+{
+    subtree.push_back(root);
+    const core::UUID root_id = m_registry.get<IDComponent>(root).id;
+    for (auto [handle, parent] : m_registry.view<ParentComponent>().each()) {
+        if (handle != root && parent.parent_id == root_id) {
+            collectSubtree(handle, subtree);
+        }
+    }
 }
 
 Entity Scene::findEntity(core::UUID id) noexcept
@@ -201,6 +334,7 @@ void Scene::runSystems(SystemStage stage, const UpdateContext& context)
 
     m_system_storage->executing = true;
     try {
+        updateWorldTransforms();
         for (const SystemStorage::Entry& entry : m_system_storage->entries) {
             if (entry.stage == stage) {
                 entry.system->onUpdate(*this, context);

@@ -17,7 +17,9 @@ template <typename Component>
 inline constexpr bool isRequiredComponent =
     std::is_same_v<std::remove_cvref_t<Component>, IDComponent> ||
     std::is_same_v<std::remove_cvref_t<Component>, TagComponent> ||
-    std::is_same_v<std::remove_cvref_t<Component>, TransformComponent>;
+    std::is_same_v<std::remove_cvref_t<Component>, TransformComponent> ||
+    std::is_same_v<std::remove_cvref_t<Component>, ParentComponent> ||
+    std::is_same_v<std::remove_cvref_t<Component>, WorldTransformComponent>;
 
 } // namespace detail
 
@@ -62,7 +64,8 @@ public:
     bool removeComponent()
     {
         static_assert(!detail::isRequiredComponent<Component>,
-                      "IDComponent, TagComponent, and TransformComponent are required and cannot be removed.");
+                      "IDComponent, TagComponent, TransformComponent, ParentComponent, and WorldTransformComponent are "
+                      "required and cannot be removed.");
         requireValid();
         return m_registry->remove<Component>(m_handle) != 0;
     }

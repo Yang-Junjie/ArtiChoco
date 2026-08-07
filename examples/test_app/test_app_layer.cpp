@@ -18,6 +18,7 @@
 #include <cstring>
 
 #include <array>
+#include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/mat4x4.hpp>
@@ -128,6 +129,18 @@ void TestAppLayer::onAttach()
             glm::quatLookAt(glm::normalize(-camera_transform.translation), glm::vec3{0.0f, 1.0f, 0.0f});
         camera.addComponent<CameraComponent>();
 
+        auto hierarchy_parent = m_scene->createEntity("hierarchy_parent");
+        auto& hierarchy_parent_transform = hierarchy_parent.getComponent<scene::TransformComponent>();
+        hierarchy_parent_transform.translation = glm::vec3{1.0f, 2.0f, 3.0f};
+        hierarchy_parent_transform.rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3{0.0f, 1.0f, 0.0f});
+        m_hierarchy_parent_entity = hierarchy_parent;
+
+        auto hierarchy_child = m_scene->createEntity("hierarchy_child");
+        m_scene->setParent(hierarchy_child, hierarchy_parent);
+        auto& hierarchy_child_transform = hierarchy_child.getComponent<scene::TransformComponent>();
+        hierarchy_child_transform.translation = glm::vec3{4.0f, 5.0f, 6.0f};
+        m_hierarchy_child_entity = hierarchy_child;
+
         if (m_smoke_render) {
             m_throw_once_pass = std::make_unique<ThrowOncePass>();
         }
@@ -198,13 +211,49 @@ void TestAppLayer::onUpdate(core::Timestep delta_time)
         return;
     }
 
+    m_fixed_timestep.tick(delta_time.getSeconds(), [this](float fixed_dt) {
+        scene::UpdateContext fixed_context;
+        fixed_context.deltaTime = core::Timestep{fixed_dt};
+        fixed_context.fixedDeltaTime = core::Timestep{fixed_dt};
+        fixed_context.frameIndex = m_fixed_frame_index++;
+        m_scene->runSystems(scene::SystemStage::FixedUpdate, fixed_context);
+    });
+
     scene::UpdateContext context;
     context.deltaTime = delta_time;
-    context.fixedDeltaTime = delta_time;
+    context.fixedDeltaTime = core::Timestep{m_fixed_timestep.fixedDeltaTime()};
     context.frameIndex = m_frame_index;
-    m_scene->runSystems(scene::SystemStage::FixedUpdate, context);
     m_scene->runSystems(scene::SystemStage::Update, context);
     m_scene->runSystems(scene::SystemStage::LateUpdate, context);
+
+    if (m_smoke_render && m_frame_index == 0) {
+        verifyHierarchy();
+    }
+}
+
+void TestAppLayer::verifyHierarchy()
+{
+    const auto& child_world = m_scene->getWorldTransform(m_hierarchy_child_entity);
+    const auto& parent_transform = m_hierarchy_parent_entity.getComponent<scene::TransformComponent>();
+    const auto& child_transform = m_hierarchy_child_entity.getComponent<scene::TransformComponent>();
+    const glm::mat4 expected = parent_transform.getTransform() * child_transform.getTransform();
+    for (size_t index = 0; index < 16; ++index) {
+        if (std::abs(glm::value_ptr(child_world)[index] - glm::value_ptr(expected)[index]) > 1e-5f) {
+            throw std::runtime_error("Hierarchy world transform propagation failed.");
+        }
+    }
+
+    const std::vector<scene::Entity> children = m_scene->getChildren(m_hierarchy_parent_entity);
+    if (children.size() != 1 || children.front() != m_hierarchy_child_entity) {
+        throw std::runtime_error("Hierarchy child enumeration failed.");
+    }
+
+    m_scene->destroyEntity(m_hierarchy_parent_entity);
+    if (m_scene->isValid(m_hierarchy_child_entity)) {
+        throw std::runtime_error("Hierarchy cascade destruction failed.");
+    }
+    m_hierarchy_parent_entity = {};
+    m_hierarchy_child_entity = {};
 }
 
 void TestAppLayer::onRender()

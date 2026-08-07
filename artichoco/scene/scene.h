@@ -12,6 +12,7 @@
 #include <typeindex>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace arti::scene {
 
@@ -40,6 +41,13 @@ public:
     Entity findEntity(core::UUID id) noexcept;
     bool containsEntity(core::UUID id) const noexcept;
     bool isValid(Entity entity) const noexcept;
+
+    void setParent(Entity child, Entity parent);
+    void detachFromParent(Entity entity);
+    Entity getParent(Entity entity) noexcept;
+    std::vector<Entity> getChildren(Entity entity);
+    const glm::mat4& getWorldTransform(Entity entity) const;
+    void updateWorldTransforms();
 
     template <typename Type, typename... Other, typename... Exclude>
     [[nodiscard]] auto view(
@@ -129,6 +137,10 @@ private:
     SceneSystem* findSystem(std::type_index type) noexcept;
     const SceneSystem* findSystem(std::type_index type) const noexcept;
     bool removeSystem(std::type_index type);
+
+    entt::entity resolveEntity(const core::UUID& id) const noexcept;
+    void updateWorldTransform(entt::entity entity);
+    void collectSubtree(entt::entity root, std::vector<entt::entity>& subtree) const;
 
     entt::registry m_registry;
     std::unordered_map<core::UUID, entt::entity> m_entity_lookup;
