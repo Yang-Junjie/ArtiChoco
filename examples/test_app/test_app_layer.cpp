@@ -120,6 +120,7 @@ void TestAppLayer::onAttach()
             scene::SystemStage::RenderExtract,
             *m_render_device,
             core::Application::get().getWindow(),
+            size_t{3},
             ARTI_TEST_COMPUTE_SHADER_PATH,
             ARTI_TEST_MESH_SHADER_PATH,
             ARTI_TEST_COMPOSITE_SHADER_PATH);
@@ -138,6 +139,14 @@ void TestAppLayer::onAttach()
         cube.addComponent<MaterialComponent>(Material{std::move(texture)});
         cube.addComponent<RotationComponent>(glm::vec3{0.7f, 1.0f, 0.35f}, 0.85f);
         m_cube_entity = cube;
+
+        auto cube_secondary = m_scene->createEntity("cube_secondary");
+        cube_secondary.addComponent<MeshComponent>(cube.getComponent<MeshComponent>().mesh);
+        cube_secondary.addComponent<MaterialComponent>(cube.getComponent<MaterialComponent>().material);
+        cube_secondary.addComponent<RotationComponent>(glm::vec3{0.0f, 1.0f, 0.0f}, -1.3f);
+        auto& secondary_transform = cube_secondary.getComponent<scene::TransformComponent>();
+        secondary_transform.translation = glm::vec3{2.0f, 0.0f, 0.0f};
+        m_cube_secondary_entity = cube_secondary;
 
         auto camera = m_scene->createEntity("camera");
         auto& camera_transform = camera.getComponent<scene::TransformComponent>();
@@ -214,10 +223,10 @@ void TestAppLayer::onAttach()
 
 void TestAppLayer::onDetach()
 {
+    m_scene.reset();
     if (m_render_device) {
         m_render_device->waitIdle();
     }
-    m_scene.reset();
     m_render_device.reset();
 }
 
@@ -243,6 +252,13 @@ void TestAppLayer::onUpdate(core::Timestep delta_time)
     m_scene->runSystems(scene::SystemStage::Update, context);
     m_scene->runSystems(scene::SystemStage::LateUpdate, context);
 
+    if (m_smoke_render && m_frame_index == 1) {
+        const auto& render_system = m_scene->getSystem<RenderSystem>();
+        if (render_system.lastDrawCount() != 2) {
+            throw std::runtime_error("The render frame data does not contain both cube draws.");
+        }
+    }
+
     if (m_smoke_render && m_frame_index == 2) {
         m_rotation_snapshot = m_cube_entity.getComponent<scene::TransformComponent>().rotation;
     } else if (m_smoke_render && m_frame_index == 3) {
@@ -262,6 +278,7 @@ void TestAppLayer::onUpdate(core::Timestep delta_time)
         verifyHierarchy();
         verifySnapshot();
         verifyTaskSystem();
+        verifyMultiEntity();
     }
 }
 
@@ -312,6 +329,23 @@ void TestAppLayer::verifySnapshot()
     }
     if (snapshot_scene.getParent(restored_child) != restored) {
         throw std::runtime_error("Scene snapshot restore broke the hierarchy.");
+    }
+}
+
+void TestAppLayer::verifyMultiEntity()
+{
+    const auto secondary = m_scene->findEntityByTag("cube_secondary");
+    if (!secondary) {
+        throw std::runtime_error("The secondary cube entity is missing.");
+    }
+    const auto& secondary_transform = secondary.getComponent<scene::TransformComponent>();
+    if (glm::length(secondary_transform.translation - glm::vec3{2.0f, 0.0f, 0.0f}) > 1e-5f) {
+        throw std::runtime_error("The secondary cube transform is incorrect.");
+    }
+    const auto& primary_mesh = m_cube_entity.getComponent<MeshComponent>().mesh;
+    const auto& secondary_mesh = secondary.getComponent<MeshComponent>().mesh;
+    if (!secondary_mesh.sharesBuffersWith(primary_mesh)) {
+        throw std::runtime_error("The secondary cube does not share GPU resources with the primary cube.");
     }
 }
 
@@ -376,35 +410,49 @@ void TestAppLayer::onRender()
 
     scene::UpdateContext context;
     context.deltaTime = m_delta_time;
-    context.fixedDeltaTime = m_delta_time;
+    context.fixedDeltaTime = core::Timestep{m_fixed_timestep.fixedDeltaTime()};
     context.frameIndex = m_frame_index;
+
+    auto& render_system = m_scene->getSystem<RenderSystem>();
 
     if (m_throw_once_pass) {
         renderer::vulkan::VulkanPass* throw_pass = m_throw_once_pass.get();
-        m_scene->getSystem<RenderSystem>().prependPass(throw_pass);
-        bool caught_expected_failure = false;
-        try {
-            m_scene->runSystems(scene::SystemStage::RenderExtract, context);
-        } catch (const std::runtime_error&) {
-            if (!m_throw_once_pass->didThrow()) {
-                throw;
-            }
-            caught_expected_failure = true;
-        }
-        m_scene->getSystem<RenderSystem>().removePass(throw_pass);
+        render_system.prependPass(throw_pass);
+        m_scene->runSystems(scene::SystemStage::RenderExtract, context);
+        render_system.waitForFrameComplete();
+        render_system.removePass(throw_pass);
         m_throw_once_pass.reset();
-        if (!caught_expected_failure) {
+
+        std::exception_ptr error = render_system.consumeRenderError();
+        if (!error) {
             throw std::logic_error("The Vulkan frame recovery test pass did not throw.");
         }
-        m_frame_recovery_awaiting_success = true;
+        bool expected_failure = false;
+        try {
+            std::rethrow_exception(error);
+        } catch (const std::runtime_error& exception) {
+            expected_failure =
+                std::string_view{exception.what()} == "Intentional Vulkan frame recording failure.";
+        } catch (...) {
+        }
+        if (!expected_failure) {
+            std::rethrow_exception(error);
+        }
+
+        m_scene->runSystems(scene::SystemStage::RenderExtract, context);
+        render_system.waitForFrameComplete();
+        if (render_system.consumeRenderError()) {
+            throw std::runtime_error("The Vulkan frame recording recovery did not succeed.");
+        }
+        core::Application::get().getLogChannel().info("Vulkan frame recording recovery smoke test passed");
+    } else {
+        m_scene->runSystems(scene::SystemStage::RenderExtract, context);
+        if (m_smoke_render) {
+            render_system.waitForFrameComplete();
+        }
     }
 
-    m_scene->runSystems(scene::SystemStage::RenderExtract, context);
     m_frame_index++;
-    if (m_frame_recovery_awaiting_success) {
-        core::Application::get().getLogChannel().info("Vulkan frame recording recovery smoke test passed");
-        m_frame_recovery_awaiting_success = false;
-    }
     if (!m_smoke_render) {
         return;
     }
@@ -424,6 +472,7 @@ void TestAppLayer::onRender()
         core::Application::get().getWindow().resize(960, 540);
     }
     if (--m_render_frames_remaining == 0) {
+        render_system.waitForFrameComplete();
         core::Application::get().getLogChannel().info("Vulkan MRT cube smoke test passed");
         core::Application::get().close();
     }

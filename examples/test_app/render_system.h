@@ -1,8 +1,14 @@
 #pragma once
+#include "artichoco/renderer/render_frame_data.h"
+#include "artichoco/renderer/render_frame_queue.h"
 #include "artichoco/scene/system.h"
 
+#include <atomic>
+#include <cstddef>
+#include <exception>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <vector>
 
@@ -26,22 +32,40 @@ class RenderSystem final : public scene::SceneSystem {
 public:
     RenderSystem(renderer::RenderDevice& render_device,
                  core::Window& window,
+                 size_t render_slots,
                  std::filesystem::path compute_shader_path,
                  std::filesystem::path mesh_shader_path,
                  std::filesystem::path composite_shader_path);
     ~RenderSystem() override;
 
+    void onAttach(scene::Scene& scene) override;
+    void onDetach(scene::Scene& scene) override;
     void onUpdate(scene::Scene& scene, const scene::UpdateContext& context) override;
 
     void prependPass(renderer::vulkan::VulkanPass* pass);
     void removePass(renderer::vulkan::VulkanPass* pass) noexcept;
-    std::span<renderer::vulkan::VulkanPass* const> passes() const noexcept;
+
+    void waitForFrameComplete();
+    std::exception_ptr consumeRenderError();
+    size_t lastDrawCount() const noexcept;
+
 private:
+    void ensurePasses(scene::Scene& scene);
+    void renderThreadLoop();
+    std::vector<renderer::vulkan::VulkanPass*> snapshotPasses();
+
     renderer::RenderDevice& m_render_device;
     core::Window& m_window;
     std::filesystem::path m_compute_shader_path;
     std::filesystem::path m_mesh_shader_path;
     std::filesystem::path m_composite_shader_path;
+
+    renderer::RenderFrameQueue m_frame_queue;
+    std::atomic<bool> m_shutdown_requested{false};
+    std::mutex m_pass_mutex;
+    std::mutex m_error_mutex;
+    std::exception_ptr m_last_render_error;
+    bool m_render_thread_started{false};
 
     std::unique_ptr<TextureComputePass> m_texture_compute_pass;
     std::unique_ptr<MrtMeshPass> m_mrt_mesh_pass;
@@ -49,6 +73,7 @@ private:
     std::vector<renderer::vulkan::VulkanPass*> m_passes;
     bool m_passes_initialized{false};
     float m_elapsed_time{0.0f};
+    std::atomic<size_t> m_last_draw_count{0};
 };
 
 } // namespace arti::test_app

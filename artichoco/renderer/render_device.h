@@ -1,6 +1,7 @@
 #pragma once
 #include "artichoco/core/window.h"
 #include "index_buffer.h"
+#include "render_frame_data.h"
 #include "texture_2d.h"
 #include "vertex_buffer.h"
 
@@ -49,7 +50,7 @@ public:
                                  uint32_t height,
                                  TextureFormat format = TextureFormat::RGBA8Srgb);
 
-    bool renderFrame(std::span<vulkan::VulkanPass* const> passes);
+    bool renderFrame(std::span<vulkan::VulkanPass* const> passes, const RenderFrameData& frame_data);
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
 

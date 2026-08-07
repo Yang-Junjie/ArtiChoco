@@ -58,6 +58,24 @@ void TaskSystem::pinnedImpl(uint32_t thread_index, const std::function<void()>& 
     m_scheduler->RunPinnedTasks();
 }
 
+void TaskSystem::launchPinned(uint32_t thread_index, const std::function<void()>& function)
+{
+    m_pinned_task = std::make_unique<enki::LambdaPinnedTask>(thread_index, function);
+    m_scheduler->AddPinnedTask(m_pinned_task.get());
+}
+
+void TaskSystem::waitForPinnedTask()
+{
+    if (m_pinned_task) {
+        m_scheduler->WaitforTask(m_pinned_task.get());
+    }
+}
+
+uint32_t TaskSystem::taskThreadCount() const noexcept
+{
+    return m_scheduler->GetNumTaskThreads();
+}
+
 void TaskSystem::waitForAll()
 {
     std::vector<std::unique_ptr<enki::TaskSet>> pending;

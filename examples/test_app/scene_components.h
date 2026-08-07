@@ -27,6 +27,16 @@ public:
         return *m_index_buffer;
     }
 
+    const std::shared_ptr<renderer::VertexBuffer>& vertexBufferPtr() const noexcept
+    {
+        return m_vertex_buffer;
+    }
+
+    const std::shared_ptr<renderer::IndexBuffer>& indexBufferPtr() const noexcept
+    {
+        return m_index_buffer;
+    }
+
     bool sharesBuffersWith(const Mesh& other) const noexcept
     {
         return m_vertex_buffer == other.m_vertex_buffer && m_index_buffer == other.m_index_buffer;
@@ -46,6 +56,11 @@ public:
     const renderer::Texture2D& baseColorTexture() const noexcept
     {
         return *m_base_color_texture;
+    }
+
+    const std::shared_ptr<renderer::Texture2D>& texturePtr() const noexcept
+    {
+        return m_base_color_texture;
     }
 
     bool sharesTextureWith(const Material& other) const noexcept

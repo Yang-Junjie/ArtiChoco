@@ -237,12 +237,12 @@ uint32_t SDLWindow::getHeight() const
 
 uint32_t SDLWindow::getFramebufferWidth() const
 {
-    return m_framebuffer_width;
+    return m_framebuffer_width.load(std::memory_order_relaxed);
 }
 
 uint32_t SDLWindow::getFramebufferHeight() const
 {
-    return m_framebuffer_height;
+    return m_framebuffer_height.load(std::memory_order_relaxed);
 }
 
 void SDLWindow::resize(uint32_t width, uint32_t height)
@@ -347,13 +347,13 @@ void SDLWindow::updateFramebufferSize()
     int height = 0;
     if (!SDL_GetWindowSizeInPixels(m_window, &width, &height)) {
         getLogChannel().warn("Failed to query SDL framebuffer size: {}", SDL_GetError());
-        m_framebuffer_width = m_info.width;
-        m_framebuffer_height = m_info.height;
+        m_framebuffer_width.store(m_info.width, std::memory_order_relaxed);
+        m_framebuffer_height.store(m_info.height, std::memory_order_relaxed);
         return;
     }
 
-    m_framebuffer_width = static_cast<uint32_t>(std::max(width, 0));
-    m_framebuffer_height = static_cast<uint32_t>(std::max(height, 0));
+    m_framebuffer_width.store(static_cast<uint32_t>(std::max(width, 0)), std::memory_order_relaxed);
+    m_framebuffer_height.store(static_cast<uint32_t>(std::max(height, 0)), std::memory_order_relaxed);
 }
 
 void SDLWindow::handleEvent(const SDL_Event& event)
@@ -397,8 +397,8 @@ void SDLWindow::handleEvent(const SDL_Event& event)
                 break;
             }
 
-            m_framebuffer_width = static_cast<uint32_t>(std::max(event.window.data1, 0));
-            m_framebuffer_height = static_cast<uint32_t>(std::max(event.window.data2, 0));
+            m_framebuffer_width.store(static_cast<uint32_t>(std::max(event.window.data1, 0)), std::memory_order_relaxed);
+            m_framebuffer_height.store(static_cast<uint32_t>(std::max(event.window.data2, 0)), std::memory_order_relaxed);
             break;
         }
         case SDL_EVENT_WINDOW_FOCUS_GAINED: {

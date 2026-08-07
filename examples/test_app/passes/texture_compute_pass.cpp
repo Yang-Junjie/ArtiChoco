@@ -20,8 +20,8 @@
 namespace arti::test_app {
 
 struct TextureComputePass::Impl {
-    Impl(const renderer::Texture2D& source, std::filesystem::path shader_path)
-        : source(&source),
+    Impl(std::shared_ptr<renderer::Texture2D> source, std::filesystem::path shader_path)
+        : source(std::move(source)),
           shader_path(std::move(shader_path))
     {}
 
@@ -48,6 +48,9 @@ struct TextureComputePass::Impl {
 
     void ensureOutput(renderer::vulkan::VulkanPassPrepareContext& context)
     {
+        if (!source) {
+            return;
+        }
         const vk::Extent2D required_extent{source->width(), source->height()};
         if (output && output->extent() == required_extent) {
             return;
@@ -64,7 +67,7 @@ struct TextureComputePass::Impl {
         output_initialized = false;
     }
 
-    const renderer::Texture2D* source{nullptr};
+    std::shared_ptr<renderer::Texture2D> source;
     std::filesystem::path shader_path;
     std::unique_ptr<renderer::vulkan::VulkanComputeShader> shader;
     std::unique_ptr<renderer::vulkan::VulkanBindingLayout> binding_layout;
@@ -76,20 +79,17 @@ struct TextureComputePass::Impl {
     bool output_initialized{false};
 };
 
-TextureComputePass::TextureComputePass(const renderer::Texture2D& source, const std::filesystem::path& shader_path)
-    : m_impl(std::make_unique<Impl>(source, shader_path))
+TextureComputePass::TextureComputePass(std::shared_ptr<renderer::Texture2D> source,
+                                       const std::filesystem::path& shader_path)
+    : m_impl(std::make_unique<Impl>(std::move(source), shader_path))
 {}
 
 TextureComputePass::~TextureComputePass() = default;
 
-void TextureComputePass::setSource(const renderer::Texture2D& source)
+void TextureComputePass::applyFrameData(const renderer::RenderFrameData& frame_data)
 {
-    m_impl->source = &source;
-}
-
-void TextureComputePass::setTime(float time) noexcept
-{
-    m_impl->time = time;
+    m_impl->source = frame_data.draws.empty() ? nullptr : frame_data.draws.front().base_color_texture;
+    m_impl->time = frame_data.time;
 }
 
 const renderer::vulkan::VulkanImage& TextureComputePass::output() const
@@ -108,6 +108,9 @@ void TextureComputePass::prepare(renderer::vulkan::VulkanPassPrepareContext& con
 
 void TextureComputePass::record(renderer::vulkan::VulkanPassContext& context)
 {
+    if (!m_impl->source || !m_impl->output) {
+        return;
+    }
     auto& frame = context.frame();
     const auto& source_image = context.image(*m_impl->source);
     auto& bindings = m_impl->binding_sets.at(frame.frameSlotIndex());

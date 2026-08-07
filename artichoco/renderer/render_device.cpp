@@ -55,7 +55,7 @@ struct RenderDevice::Impl final : detail::DeferredResourceOwner, std::enable_sha
     void deferRelease(std::packaged_task<void()> release) override;
     void shutdown();
 
-    bool renderFrame(std::span<vulkan::VulkanPass* const> passes);
+    bool renderFrame(std::span<vulkan::VulkanPass* const> passes, const RenderFrameData& frame_data);
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
 
@@ -156,7 +156,7 @@ Texture2D RenderDevice::Impl::createTexture2D(std::span<const std::byte> rgba_pi
 #pragma endregion ResourceCreation
 
 #pragma region RenderDeviceFrame
-bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes)
+bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes, const RenderFrameData& frame_data)
 {
     if (passes.empty() || std::ranges::any_of(passes, [](const vulkan::VulkanPass* pass) {
             return pass == nullptr;
@@ -185,7 +185,7 @@ bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes
     }
 
     auto& frame = *begin_result.frame;
-    vulkan::VulkanPassContext pass_context{frame.context(), this, m_pipeline_cache};
+    vulkan::VulkanPassContext pass_context{frame.context(), this, m_pipeline_cache, frame_data};
     for (vulkan::VulkanPass* pass : passes) {
         pass->record(pass_context);
     }
@@ -235,9 +235,9 @@ Texture2D RenderDevice::createTexture2D(std::span<const std::byte> rgba_pixels,
     return m_impl->createTexture2D(rgba_pixels, width, height, format);
 }
 
-bool RenderDevice::renderFrame(std::span<vulkan::VulkanPass* const> passes)
+bool RenderDevice::renderFrame(std::span<vulkan::VulkanPass* const> passes, const RenderFrameData& frame_data)
 {
-    return m_impl->renderFrame(passes);
+    return m_impl->renderFrame(passes, frame_data);
 }
 
 void RenderDevice::requestSwapchainRecreation() noexcept

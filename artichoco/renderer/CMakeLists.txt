@@ -28,6 +28,7 @@ add_library(artichoco_renderer STATIC
     vulkan/vulkan_shader.cpp
     vulkan/vulkan_upload_context.cpp
     render_device.cpp
+    render_frame_queue.cpp
     vulkan/vulkan_surface.cpp
     vulkan/vulkan_swapchain.cpp
 )

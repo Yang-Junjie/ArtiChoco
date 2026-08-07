@@ -4,7 +4,7 @@ struct FrameUniforms
     float4 tint;
 };
 
-[[vk::binding(0, 0)]] ConstantBuffer<FrameUniforms> frame_uniforms;
+[[vk::push_constant]] ConstantBuffer<FrameUniforms> frame_uniforms;
 [[vk::binding(1, 0)]] StructuredBuffer<float4> material_data;
 [[vk::binding(2, 0)]] Texture2D<float4> base_color_texture;
 [[vk::binding(3, 0)]] SamplerState base_color_sampler;

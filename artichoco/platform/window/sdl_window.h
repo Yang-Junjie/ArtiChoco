@@ -4,6 +4,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
+
 namespace arti::platform {
 
 class SDLWindow final : public core::Window, public core::InputProvider {
@@ -43,8 +45,8 @@ private:
     EventCallbackFn m_event_callback;
     SDL_Window* m_window{nullptr};
     SDL_WindowID m_window_id{0};
-    uint32_t m_framebuffer_width{0};
-    uint32_t m_framebuffer_height{0};
+    std::atomic<uint32_t> m_framebuffer_width{0};
+    std::atomic<uint32_t> m_framebuffer_height{0};
     core::CursorMode m_cursor_mode{core::CursorMode::Normal};
     bool m_should_close{false};
     bool m_platform_acquired{false};

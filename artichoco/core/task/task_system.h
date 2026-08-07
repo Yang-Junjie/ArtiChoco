@@ -10,6 +10,7 @@
 namespace enki {
 class TaskScheduler;
 class TaskSet;
+class LambdaPinnedTask;
 } // namespace enki
 
 namespace arti::core {
@@ -42,6 +43,10 @@ public:
         pinnedImpl(thread_index, [fn = std::forward<Fn>(function)]() mutable { fn(); });
     }
 
+    void launchPinned(uint32_t thread_index, const std::function<void()>& function);
+    void waitForPinnedTask();
+    uint32_t taskThreadCount() const noexcept;
+
     void waitForAll();
 
 private:
@@ -52,6 +57,7 @@ private:
     std::unique_ptr<enki::TaskScheduler> m_scheduler;
     std::mutex m_pending_mutex;
     std::vector<std::unique_ptr<enki::TaskSet>> m_pending;
+    std::unique_ptr<enki::LambdaPinnedTask> m_pinned_task;
 };
 
 } // namespace arti::core

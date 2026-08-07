@@ -33,12 +33,12 @@ private:
     void verifyHierarchy();
     void verifySnapshot();
     void verifyTaskSystem();
+    void verifyMultiEntity();
 
 private:
     bool m_smoke_vulkan{false};
     bool m_enable_renderer{false};
     bool m_smoke_render{false};
-    bool m_frame_recovery_awaiting_success{false};
     uint32_t m_render_frames_remaining{0};
     uint32_t m_frame_index{0};
     uint32_t m_fixed_frame_index{0};
@@ -47,6 +47,7 @@ private:
     std::unique_ptr<renderer::RenderDevice> m_render_device;
     std::unique_ptr<scene::Scene> m_scene;
     scene::Entity m_cube_entity;
+    scene::Entity m_cube_secondary_entity;
     glm::quat m_rotation_snapshot{1.0f, 0.0f, 0.0f, 0.0f};
     scene::Entity m_hierarchy_parent_entity;
     scene::Entity m_hierarchy_child_entity;

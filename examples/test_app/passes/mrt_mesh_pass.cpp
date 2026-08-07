@@ -20,6 +20,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstring>
+#include <glm/gtc/type_ptr.hpp>
 #include <span>
 #include <stdexcept>
 #include <type_traits>
@@ -97,17 +100,12 @@ struct MrtMeshPass::Impl {
         auto program = renderer::SlangCompiler::compileGraphics({shader_path});
         binding_layout = std::make_unique<renderer::vulkan::VulkanBindingLayout>(context.device(), program.reflection);
         shader = std::make_unique<renderer::vulkan::VulkanShader>(context.device(), std::move(program));
-        
-        binding_sets.reserve(context.frameSlotCount());
-        frame_uniform_buffers.reserve(context.frameSlotCount());
+        if (binding_layout->pushConstantRanges().empty()) {
+            throw std::invalid_argument("The mesh shader requires push constants.");
+        }
 
-        renderer::vulkan::VulkanBufferCreateInfo uniform_buffer_info;
-        uniform_buffer_info.size = sizeof(MeshFrameUniforms);
-        uniform_buffer_info.usage = vk::BufferUsageFlagBits::eUniformBuffer;
-        uniform_buffer_info.memory = renderer::vulkan::VulkanBufferMemory::HostVisible;
-        
+        binding_sets.reserve(context.frameSlotCount());
         for (size_t index = 0; index < context.frameSlotCount(); ++index) {
-            frame_uniform_buffers.emplace_back(context.allocator(), uniform_buffer_info);
             binding_sets.emplace_back(context.device(), context.descriptorAllocator(), *binding_layout);
         }
 
@@ -124,7 +122,6 @@ struct MrtMeshPass::Impl {
             context.uploadContext(), std::as_bytes(std::span{meshMaterialData}), fragment_storage_read);
 
         for (size_t index = 0; index < binding_sets.size(); ++index) {
-            binding_sets[index].writeUniformBuffer("frame_uniforms", frame_uniform_buffers[index]);
             binding_sets[index].writeStorageBuffer("material_data", *material_buffer);
         }
         base_color_sampler = renderer::vulkan::VulkanSampler{context.device()};
@@ -168,8 +165,6 @@ struct MrtMeshPass::Impl {
     TextureComputePass* texture_source{nullptr};
     std::filesystem::path shader_path;
     const renderer::vulkan::VulkanDevice* device{nullptr};
-    const renderer::VertexBuffer* vertex_buffer{nullptr};
-    const renderer::IndexBuffer* index_buffer{nullptr};
     std::unique_ptr<renderer::vulkan::VulkanShader> shader;
     std::unique_ptr<renderer::vulkan::VulkanBindingLayout> binding_layout;
     const renderer::vulkan::VulkanPipeline* pipeline{nullptr};
@@ -178,26 +173,7 @@ struct MrtMeshPass::Impl {
     std::unique_ptr<renderer::vulkan::VulkanImage> auxiliary_output;
     std::unique_ptr<renderer::vulkan::VulkanDepthBuffer> depth_buffer;
     std::unique_ptr<renderer::vulkan::VulkanBuffer> material_buffer;
-    std::vector<renderer::vulkan::VulkanBuffer> frame_uniform_buffers;
     std::vector<renderer::vulkan::VulkanBindingSet> binding_sets;
-    std::array<float, 16> transform{
-        1.0f,
-        0.0f,
-        0.0f,
-        0.0f,
-        0.0f,
-        1.0f,
-        0.0f,
-        0.0f,
-        0.0f,
-        0.0f,
-        1.0f,
-        0.0f,
-        0.0f,
-        0.0f,
-        0.0f,
-        1.0f,
-    };
     std::array<float, 4> clear_color{0.04f, 0.08f, 0.12f, 1.0f};
     bool outputs_initialized{false};
     bool depth_initialized{false};
@@ -208,18 +184,6 @@ MrtMeshPass::MrtMeshPass(TextureComputePass& texture_source, const std::filesyst
 {}
 
 MrtMeshPass::~MrtMeshPass() = default;
-
-void MrtMeshPass::setGeometry(const renderer::VertexBuffer& vertex_buffer,
-                              const renderer::IndexBuffer& index_buffer) noexcept
-{
-    m_impl->vertex_buffer = &vertex_buffer;
-    m_impl->index_buffer = &index_buffer;
-}
-
-void MrtMeshPass::setTransform(const std::array<float, 16>& transform) noexcept
-{
-    m_impl->transform = transform;
-}
 
 void MrtMeshPass::setClearColor(const std::array<float, 4>& color) noexcept
 {
@@ -250,30 +214,15 @@ void MrtMeshPass::prepare(renderer::vulkan::VulkanPassPrepareContext& context)
 
 void MrtMeshPass::record(renderer::vulkan::VulkanPassContext& context)
 {
-    if (m_impl->vertex_buffer == nullptr || m_impl->index_buffer == nullptr) {
-        throw std::logic_error("MrtMeshPass requires geometry before recording.");
-    }
-
     auto& frame = context.frame();
+    const auto& frame_data = context.frameData();
+    if (frame_data.draws.empty()) {
+        return;
+    }
     const auto& texture = m_impl->texture_source->output();
-    const auto& layout = m_impl->vertex_buffer->layout();
     const std::array color_formats = {m_impl->color_output->format(), m_impl->auxiliary_output->format()};
 
-    renderer::vulkan::VulkanGraphicsPipelineCreateInfo pipeline_info;
-    pipeline_info.color_formats.assign(color_formats.begin(), color_formats.end());
-    pipeline_info.color_blend_attachments.assign(color_formats.size(), opaqueColorBlend());
-    pipeline_info.depth_format = m_impl->depth_buffer->format();
-    pipeline_info.depth_test_enable = true;
-    pipeline_info.depth_write_enable = true;
-    m_impl->pipeline =
-        &context.pipelineCache().getGraphics(*m_impl->shader, *m_impl->binding_layout, layout, pipeline_info);
-
     auto& bindings = m_impl->binding_sets.at(frame.frameSlotIndex());
-    MeshFrameUniforms frame_uniforms{
-        m_impl->transform,
-        {1.0f, 1.0f, 1.0f, 1.0f},
-    };
-    m_impl->frame_uniform_buffers.at(frame.frameSlotIndex()).write(std::as_bytes(std::span{&frame_uniforms, 1}));
     bindings.writeSampledImage("base_color_texture", *texture.imageView());
     bindings.writeSampler("base_color_sampler", *m_impl->base_color_sampler.handle());
 
@@ -321,12 +270,36 @@ void MrtMeshPass::record(renderer::vulkan::VulkanPassContext& context)
 
     commands.beginRendering(rendering_info);
     commands.setViewportAndScissor(m_impl->color_output->extent());
-    commands.bindPipeline(*m_impl->pipeline);
-    commands.bindBindingSet(*m_impl->pipeline, bindings);
-    commands.bindVertexBuffer(context.buffer(*m_impl->vertex_buffer));
-    commands.bindIndexBuffer(context.buffer(*m_impl->index_buffer),
-                             toVulkanIndexType(m_impl->index_buffer->indexType()));
-    commands.drawIndexed(m_impl->index_buffer->indexCount());
+
+    const vk::ShaderStageFlags push_constant_stages =
+        m_impl->binding_layout->pushConstantRanges().front().stageFlags;
+    for (const auto& draw : frame_data.draws) {
+        if (!draw.vertex_buffer || !draw.index_buffer) {
+            continue;
+        }
+        const auto& layout = draw.vertex_buffer->layout();
+        renderer::vulkan::VulkanGraphicsPipelineCreateInfo pipeline_info;
+        pipeline_info.color_formats.assign(color_formats.begin(), color_formats.end());
+        pipeline_info.color_blend_attachments.assign(color_formats.size(), opaqueColorBlend());
+        pipeline_info.depth_format = m_impl->depth_buffer->format();
+        pipeline_info.depth_test_enable = true;
+        pipeline_info.depth_write_enable = true;
+        m_impl->pipeline =
+            &context.pipelineCache().getGraphics(*m_impl->shader, *m_impl->binding_layout, layout, pipeline_info);
+
+        const glm::mat4 mvp = frame_data.projection * frame_data.view * draw.model_matrix;
+        MeshFrameUniforms frame_uniforms{};
+        std::memcpy(frame_uniforms.model_view_projection.data(), glm::value_ptr(mvp), sizeof(frame_uniforms.model_view_projection));
+        frame_uniforms.tint = {1.0f, 1.0f, 1.0f, 1.0f};
+
+        commands.bindPipeline(*m_impl->pipeline);
+        commands.bindBindingSet(*m_impl->pipeline, bindings);
+        commands.pushConstants(*m_impl->pipeline->layout(), push_constant_stages, 0, frame_uniforms);
+        commands.bindVertexBuffer(context.buffer(*draw.vertex_buffer));
+        commands.bindIndexBuffer(context.buffer(*draw.index_buffer), toVulkanIndexType(draw.index_buffer->indexType()));
+        commands.drawIndexed(draw.index_buffer->indexCount());
+    }
+
     commands.endRendering();
 
     const auto color_to_sample = renderer::vulkan::makeImageBarrier(m_impl->color_output->image(),
