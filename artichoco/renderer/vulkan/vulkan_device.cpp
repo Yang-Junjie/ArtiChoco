@@ -151,6 +151,8 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
     vk::PhysicalDeviceFeatures enabled_features{};
     m_independent_blend_enabled = static_cast<bool>(m_physical_device.getFeatures().independentBlend);
     enabled_features.setIndependentBlend(m_independent_blend_enabled);
+    m_sampler_anisotropy_enabled = static_cast<bool>(m_physical_device.getFeatures().samplerAnisotropy);
+    enabled_features.setSamplerAnisotropy(m_sampler_anisotropy_enabled);
 
     vk::DeviceCreateInfo device_info{};
     device_info.setQueueCreateInfos(queue_create_infos)
@@ -208,6 +210,11 @@ bool VulkanDevice::usesCore13() const noexcept
 bool VulkanDevice::independentBlendEnabled() const noexcept
 {
     return m_independent_blend_enabled;
+}
+
+bool VulkanDevice::samplerAnisotropyEnabled() const noexcept
+{
+    return m_sampler_anisotropy_enabled;
 }
 
 } // namespace arti::renderer::vulkan

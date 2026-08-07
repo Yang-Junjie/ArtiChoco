@@ -4,6 +4,7 @@ add_library(artichoco_core STATIC
     io/input.cpp
     layer_stack.cpp
     log.cpp
+    task/task_system.cpp
     uuid.cpp
     window.cpp
 )
@@ -20,4 +21,5 @@ target_link_libraries(artichoco_core
     PUBLIC
         ArtiSDK::GLM
         spdlog::spdlog
+        enkiTS
 )

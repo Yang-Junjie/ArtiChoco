@@ -12,6 +12,8 @@
 
 namespace arti::core {
 
+class TaskSystem;
+
 struct ApplicationCreateInfo {
     std::string name{"ArtiChoco"};
     std::string log_channel{"ArtiApp"};
@@ -49,6 +51,7 @@ private:
     Logger::ChannelHandle m_log_channel;
     std::unique_ptr<Window> m_window;
     LayerStack m_layer_stack;
+    std::unique_ptr<TaskSystem> m_task_system;
 };
 
 Application* createApplication(int argc, char** argv);

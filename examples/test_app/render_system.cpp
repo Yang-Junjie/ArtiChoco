@@ -41,7 +41,8 @@ void RenderSystem::onUpdate(scene::Scene& scene, const scene::UpdateContext& con
         if (materials.empty()) {
             return;
         }
-        const renderer::Texture2D& texture = materials.get<MaterialComponent>(materials.front()).base_color_texture;
+        const renderer::Texture2D& texture =
+            materials.get<MaterialComponent>(materials.front()).material.baseColorTexture();
         m_texture_compute_pass = std::make_unique<TextureComputePass>(texture, m_compute_shader_path);
         m_mrt_mesh_pass = std::make_unique<MrtMeshPass>(*m_texture_compute_pass, m_mesh_shader_path);
         m_mrt_composite_pass = std::make_unique<MrtCompositePass>(*m_mrt_mesh_pass, m_composite_shader_path);
@@ -75,9 +76,9 @@ void RenderSystem::onUpdate(scene::Scene& scene, const scene::UpdateContext& con
         std::array<float, 16> transform_values;
         std::memcpy(transform_values.data(), glm::value_ptr(mvp), sizeof(transform_values));
 
-        m_texture_compute_pass->setSource(material.base_color_texture);
+        m_texture_compute_pass->setSource(material.material.baseColorTexture());
         m_texture_compute_pass->setTime(m_elapsed_time);
-        m_mrt_mesh_pass->setGeometry(mesh.vertex_buffer, mesh.index_buffer);
+        m_mrt_mesh_pass->setGeometry(mesh.mesh.vertexBuffer(), mesh.mesh.indexBuffer());
         m_mrt_mesh_pass->setTransform(transform_values);
     }
 

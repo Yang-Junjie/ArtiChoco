@@ -121,12 +121,23 @@ VulkanContext::VulkanContext(const VulkanContextCreateInfo& info, const VulkanSu
 
     const std::vector<const char*> validation_layers = {"VK_LAYER_KHRONOS_validation"};
 
+    vk::Bool32 queue_validation_setting = false;
+    vk::LayerSettingEXT layer_setting{};
+    layer_setting.pLayerName = "VK_LAYER_KHRONOS_validation";
+    layer_setting.pSettingName = "queue_validation";
+    layer_setting.type = vk::LayerSettingTypeEXT::eBool32;
+    layer_setting.valueCount = 1;
+    layer_setting.pValues = &queue_validation_setting;
+
+    vk::LayerSettingsCreateInfoEXT layer_settings{};
+    layer_settings.setPSettings(&layer_setting).setSettingCount(1).setPNext(&debug_info);
+
     vk::InstanceCreateInfo instance_info{};
     instance_info.setFlags(instance_flags)
         .setPApplicationInfo(&application_info)
         .setPEnabledExtensionNames(extension_names);
     if (validation_enabled) {
-        instance_info.setPEnabledLayerNames(validation_layers).setPNext(&debug_info);
+        instance_info.setPEnabledLayerNames(validation_layers).setPNext(&layer_settings);
     }
 
     m_instance = vk::raii::Instance{m_context, instance_info};

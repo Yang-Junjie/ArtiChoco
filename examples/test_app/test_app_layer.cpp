@@ -6,6 +6,7 @@
 #include "artichoco/renderer/vulkan/vulkan_device.h"
 #include "artichoco/renderer/vulkan/vulkan_surface.h"
 #include "artichoco/scene/scene.h"
+#include "artichoco/core/task/task_system.h"
 #include "camera_controller_system.h"
 #include "image_loader.h"
 #include "render_system.h"
@@ -18,6 +19,7 @@
 #include <cstring>
 
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -27,6 +29,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace arti::test_app {
 namespace {
@@ -74,6 +77,16 @@ renderer::VertexBufferLayout cubeVertexLayout()
     return layout;
 }
 
+class SystemToggleProbe final : public scene::SceneSystem {
+public:
+    void onUpdate(scene::Scene& scene, const scene::UpdateContext& context) override
+    {
+        if (context.frameIndex == 2) {
+            scene.setSystemEnabled<RotationSystem>(false);
+        }
+    }
+};
+
 } // namespace
 
 TestAppLayer::TestAppLayer(bool smoke_vulkan, bool enable_renderer, bool smoke_render)
@@ -97,8 +110,12 @@ void TestAppLayer::onAttach()
             core::Application::get().getWindow(), std::move(surface_source), render_device_info);
 
         m_scene = std::make_unique<scene::Scene>();
+        scene::Scene::registerComponentCopy<MeshComponent>();
+        scene::Scene::registerComponentCopy<MaterialComponent>();
+        scene::Scene::registerComponentCopy<RotationComponent>();
         m_scene->addSystem<CameraControllerSystem>(scene::SystemStage::Update);
         m_scene->addSystem<RotationSystem>(scene::SystemStage::Update);
+        m_scene->addSystem<SystemToggleProbe>(scene::SystemStage::Update);
         m_scene->addSystem<RenderSystem>(
             scene::SystemStage::RenderExtract,
             *m_render_device,
@@ -117,8 +134,8 @@ void TestAppLayer::onAttach()
             brownie.rgba_pixels, brownie.width, brownie.height, renderer::TextureFormat::RGBA8Srgb);
 
         auto cube = m_scene->createEntity("cube");
-        cube.addComponent<MeshComponent>(std::move(vertex_buffer), std::move(index_buffer));
-        cube.addComponent<MaterialComponent>(std::move(texture));
+        cube.addComponent<MeshComponent>(Mesh{std::move(vertex_buffer), std::move(index_buffer)});
+        cube.addComponent<MaterialComponent>(Material{std::move(texture)});
         cube.addComponent<RotationComponent>(glm::vec3{0.7f, 1.0f, 0.35f}, 0.85f);
         m_cube_entity = cube;
 
@@ -226,8 +243,96 @@ void TestAppLayer::onUpdate(core::Timestep delta_time)
     m_scene->runSystems(scene::SystemStage::Update, context);
     m_scene->runSystems(scene::SystemStage::LateUpdate, context);
 
+    if (m_smoke_render && m_frame_index == 2) {
+        m_rotation_snapshot = m_cube_entity.getComponent<scene::TransformComponent>().rotation;
+    } else if (m_smoke_render && m_frame_index == 3) {
+        const auto& rotation = m_cube_entity.getComponent<scene::TransformComponent>().rotation;
+        if (glm::length(rotation - m_rotation_snapshot) > 1e-6f) {
+            throw std::runtime_error("A disabled System still ran.");
+        }
+        m_scene->setSystemEnabled<RotationSystem>(true);
+    } else if (m_smoke_render && m_frame_index == 4) {
+        const auto& rotation = m_cube_entity.getComponent<scene::TransformComponent>().rotation;
+        if (glm::length(rotation - m_rotation_snapshot) <= 1e-6f) {
+            throw std::runtime_error("A re-enabled System did not run.");
+        }
+    }
+
     if (m_smoke_render && m_frame_index == 0) {
         verifyHierarchy();
+        verifySnapshot();
+        verifyTaskSystem();
+    }
+}
+
+void TestAppLayer::verifySnapshot()
+{
+    const auto& cube_mesh = m_cube_entity.getComponent<MeshComponent>().mesh;
+    const auto& cube_material = m_cube_entity.getComponent<MaterialComponent>().material;
+
+    scene::Scene snapshot_scene;
+    auto snap_mesh = snapshot_scene.createEntity("snap_mesh");
+    auto& snap_transform = snap_mesh.getComponent<scene::TransformComponent>();
+    snap_transform.translation = glm::vec3{10.0f, 20.0f, 30.0f};
+    snap_mesh.addComponent<MeshComponent>(cube_mesh);
+    snap_mesh.addComponent<MaterialComponent>(cube_material);
+    snap_mesh.addComponent<RotationComponent>(glm::vec3{0.0f, 1.0f, 0.0f}, 2.0f);
+    auto snap_child = snapshot_scene.createEntity("snap_child");
+    snapshot_scene.setParent(snap_child, snap_mesh);
+
+    scene::Scene snapshot;
+    snapshot.copyEntitiesFrom(snapshot_scene);
+
+    snapshot_scene.destroyEntity(snap_mesh);
+
+    snapshot_scene.copyEntitiesFrom(snapshot);
+
+    const auto restored = snapshot_scene.findEntityByTag("snap_mesh");
+    if (!restored) {
+        throw std::runtime_error("Scene snapshot restore lost the mesh entity.");
+    }
+    const auto& restored_transform = restored.getComponent<scene::TransformComponent>();
+    if (glm::length(restored_transform.translation - glm::vec3{10.0f, 20.0f, 30.0f}) > 1e-5f) {
+        throw std::runtime_error("Scene snapshot restore changed the transform.");
+    }
+    const auto& restored_rotation = restored.getComponent<RotationComponent>();
+    if (glm::length(restored_rotation.axis - glm::vec3{0.0f, 1.0f, 0.0f}) > 1e-5f ||
+        std::abs(restored_rotation.speed - 2.0f) > 1e-5f) {
+        throw std::runtime_error("Scene snapshot restore changed a registered component.");
+    }
+    const auto& restored_mesh = restored.getComponent<MeshComponent>().mesh;
+    const auto& restored_material = restored.getComponent<MaterialComponent>().material;
+    if (!restored_mesh.sharesBuffersWith(cube_mesh) || !restored_material.sharesTextureWith(cube_material)) {
+        throw std::runtime_error("Scene snapshot restore did not share GPU resources.");
+    }
+
+    const auto restored_child = snapshot_scene.findEntityByTag("snap_child");
+    if (!restored_child) {
+        throw std::runtime_error("Scene snapshot restore lost the child entity.");
+    }
+    if (snapshot_scene.getParent(restored_child) != restored) {
+        throw std::runtime_error("Scene snapshot restore broke the hierarchy.");
+    }
+}
+
+void TestAppLayer::verifyTaskSystem()
+{
+    constexpr uint32_t count = 4096;
+    std::vector<uint32_t> results(count, 0);
+    core::TaskSystem::get().parallelFor(count, [&results](uint32_t index) { results[index] = index * 2; });
+    for (uint32_t index = 0; index < count; ++index) {
+        if (results[index] != index * 2) {
+            throw std::runtime_error("TaskSystem parallelFor produced incorrect results.");
+        }
+    }
+
+    std::atomic<uint32_t> submitted_count{0};
+    for (uint32_t index = 0; index < 32; ++index) {
+        core::TaskSystem::get().submit([&submitted_count] { submitted_count.fetch_add(1); });
+    }
+    core::TaskSystem::get().waitForAll();
+    if (submitted_count.load() != 32) {
+        throw std::runtime_error("TaskSystem submit did not complete all tasks.");
     }
 }
 
@@ -246,6 +351,13 @@ void TestAppLayer::verifyHierarchy()
     const std::vector<scene::Entity> children = m_scene->getChildren(m_hierarchy_parent_entity);
     if (children.size() != 1 || children.front() != m_hierarchy_child_entity) {
         throw std::runtime_error("Hierarchy child enumeration failed.");
+    }
+
+    if (m_scene->findEntityByTag("hierarchy_child") != m_hierarchy_child_entity) {
+        throw std::runtime_error("findEntityByTag lookup failed.");
+    }
+    if (m_scene->findEntityByTag("no_such_tag")) {
+        throw std::runtime_error("findEntityByTag returned a match for an unknown tag.");
     }
 
     m_scene->destroyEntity(m_hierarchy_parent_entity);
@@ -301,13 +413,14 @@ void TestAppLayer::onRender()
             std::as_bytes(std::span{vertices}), static_cast<uint32_t>(vertices.size()), cubeVertexLayout());
         auto replacement_indices =
             m_render_device->createIndexBuffer(std::as_bytes(std::span{indices}), static_cast<uint32_t>(indices.size()));
-        m_cube_entity.getComponent<MeshComponent>() = MeshComponent{std::move(replacement_vertices),
-                                                                    std::move(replacement_indices)};
+        m_cube_entity.getComponent<MeshComponent>() =
+            MeshComponent{Mesh{std::move(replacement_vertices), std::move(replacement_indices)}};
 
         const ImageData brownie = loadImageRGBA(ARTI_TEST_BROWNIE_TEXTURE_PATH);
         auto replacement_texture = m_render_device->createTexture2D(
             brownie.rgba_pixels, brownie.width, brownie.height, renderer::TextureFormat::RGBA8Srgb);
-        m_cube_entity.getComponent<MaterialComponent>() = MaterialComponent{std::move(replacement_texture)};
+        m_cube_entity.getComponent<MaterialComponent>() =
+            MaterialComponent{Material{std::move(replacement_texture)}};
         core::Application::get().getWindow().resize(960, 540);
     }
     if (--m_render_frames_remaining == 0) {

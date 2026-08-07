@@ -31,6 +31,8 @@ public:
 
 private:
     void verifyHierarchy();
+    void verifySnapshot();
+    void verifyTaskSystem();
 
 private:
     bool m_smoke_vulkan{false};
@@ -45,6 +47,7 @@ private:
     std::unique_ptr<renderer::RenderDevice> m_render_device;
     std::unique_ptr<scene::Scene> m_scene;
     scene::Entity m_cube_entity;
+    glm::quat m_rotation_snapshot{1.0f, 0.0f, 0.0f, 0.0f};
     scene::Entity m_hierarchy_parent_entity;
     scene::Entity m_hierarchy_child_entity;
     std::unique_ptr<ThrowOncePass> m_throw_once_pass;

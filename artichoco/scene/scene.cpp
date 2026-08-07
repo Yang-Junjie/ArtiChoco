@@ -28,6 +28,7 @@ struct Scene::SystemStorage {
         SystemStage stage;
         std::type_index type;
         std::unique_ptr<SceneSystem> system;
+        bool enabled{true};
     };
 
     std::vector<Entry> entries;
@@ -238,6 +239,16 @@ Entity Scene::findEntity(core::UUID id) noexcept
     return Entity{found->second, m_registry};
 }
 
+Entity Scene::findEntityByTag(std::string_view tag) noexcept
+{
+    for (auto [handle, tag_component] : m_registry.view<TagComponent>().each()) {
+        if (tag_component.tag == tag) {
+            return Entity{handle, m_registry};
+        }
+    }
+    return {};
+}
+
 bool Scene::containsEntity(core::UUID id) const noexcept
 {
     const auto found = m_entity_lookup.find(id);
@@ -247,6 +258,68 @@ bool Scene::containsEntity(core::UUID id) const noexcept
 bool Scene::isValid(Entity entity) const noexcept
 {
     return entity.m_registry == &m_registry && entity.m_handle != entt::null && m_registry.valid(entity.m_handle);
+}
+
+std::unordered_map<entt::id_type, Scene::ComponentCopyRegistration>& Scene::copyRegistry()
+{
+    static std::unordered_map<entt::id_type, ComponentCopyRegistration> registry = [] {
+        std::unordered_map<entt::id_type, ComponentCopyRegistration> initial;
+        registerCopyInto<IDComponent>(initial);
+        registerCopyInto<TagComponent>(initial);
+        registerCopyInto<TransformComponent>(initial);
+        registerCopyInto<ParentComponent>(initial);
+        registerCopyInto<WorldTransformComponent>(initial);
+        return initial;
+    }();
+    return registry;
+}
+
+void Scene::clearEntities()
+{
+    std::vector<entt::entity> entities;
+    const auto& entity_storage = m_registry.storage<entt::entity>();
+    entities.reserve(entity_storage.size());
+    for (auto [entity] : entity_storage.each()) {
+        entities.push_back(entity);
+    }
+    for (const entt::entity entity : entities) {
+        const core::UUID id = m_registry.get<IDComponent>(entity).id;
+        m_entity_lookup.erase(id);
+        m_registry.destroy(entity);
+    }
+}
+
+void Scene::copyEntitiesFrom(const Scene& source)
+{
+    if (this == &source) {
+        throw std::invalid_argument("A Scene cannot copy entities from itself.");
+    }
+
+    clearEntities();
+
+    std::unordered_map<entt::entity, entt::entity> entity_map;
+    const auto* entity_storage = source.m_registry.storage<entt::entity>();
+    entity_map.reserve(entity_storage->size());
+    for (auto [source_entity] : entity_storage->each()) {
+        const entt::entity destination_entity = m_registry.create();
+        entity_map.emplace(source_entity, destination_entity);
+    }
+
+    for (const auto& [id, registration] : copyRegistry()) {
+        const auto* storage = source.m_registry.storage(id);
+        if (storage == nullptr) {
+            continue;
+        }
+        for (const auto& [source_entity, destination_entity] : entity_map) {
+            if (storage->contains(source_entity)) {
+                registration.copy_fn(source.m_registry, m_registry, source_entity, destination_entity);
+            }
+        }
+    }
+
+    for (const auto& [source_entity, destination_entity] : entity_map) {
+        m_entity_lookup.emplace(m_registry.get<IDComponent>(destination_entity).id, destination_entity);
+    }
 }
 
 SceneSystem& Scene::registerSystem(
@@ -323,6 +396,27 @@ bool Scene::removeSystem(std::type_index type)
     return true;
 }
 
+void Scene::setSystemEnabled(std::type_index type, bool enabled)
+{
+    const auto found = std::find_if(
+        m_system_storage->entries.begin(),
+        m_system_storage->entries.end(),
+        [type](const SystemStorage::Entry& entry) { return entry.type == type; });
+    if (found == m_system_storage->entries.end()) {
+        throw std::out_of_range("The requested System is not registered with this Scene.");
+    }
+    found->enabled = enabled;
+}
+
+bool Scene::isSystemEnabled(std::type_index type) const noexcept
+{
+    const auto found = std::find_if(
+        m_system_storage->entries.cbegin(),
+        m_system_storage->entries.cend(),
+        [type](const SystemStorage::Entry& entry) { return entry.type == type; });
+    return found != m_system_storage->entries.cend() && found->enabled;
+}
+
 void Scene::runSystems(SystemStage stage, const UpdateContext& context)
 {
     if (!isValidSystemStage(stage)) {
@@ -336,7 +430,7 @@ void Scene::runSystems(SystemStage stage, const UpdateContext& context)
     try {
         updateWorldTransforms();
         for (const SystemStorage::Entry& entry : m_system_storage->entries) {
-            if (entry.stage == stage) {
+            if (entry.stage == stage && entry.enabled) {
                 entry.system->onUpdate(*this, context);
             }
         }

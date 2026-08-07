@@ -5,9 +5,11 @@
 #include <entt/entt.hpp>
 
 #include <concepts>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <typeindex>
 #include <unordered_map>
@@ -39,6 +41,8 @@ public:
     Entity createEntityWithUUID(core::UUID id, std::string tag = "Entity");
     void destroyEntity(Entity entity);
     Entity findEntity(core::UUID id) noexcept;
+    Entity findEntityByTag(std::string_view tag) noexcept;
+    
     bool containsEntity(core::UUID id) const noexcept;
     bool isValid(Entity entity) const noexcept;
 
@@ -48,6 +52,17 @@ public:
     std::vector<Entity> getChildren(Entity entity);
     const glm::mat4& getWorldTransform(Entity entity) const;
     void updateWorldTransforms();
+
+    template <typename Component>
+    static void registerComponentCopy()
+    {
+        static_assert(std::is_copy_constructible_v<Component>,
+                      "Scene components must be copy-constructible to support scene copying.");
+        registerCopyInto<Component>(copyRegistry());
+    }
+
+    void clearEntities();
+    void copyEntitiesFrom(const Scene& source);
 
     template <typename Type, typename... Other, typename... Exclude>
     [[nodiscard]] auto view(
@@ -125,10 +140,51 @@ public:
         return removeSystem(std::type_index{typeid(SystemType)});
     }
 
+    template <typename System>
+    void setSystemEnabled(bool enabled)
+    {
+        using SystemType = std::remove_cvref_t<System>;
+        static_assert(std::derived_from<SystemType, SceneSystem>,
+                      "A Scene System must derive from SceneSystem.");
+        setSystemEnabled(std::type_index{typeid(SystemType)}, enabled);
+    }
+
+    template <typename System>
+    bool isSystemEnabled() const noexcept
+    {
+        using SystemType = std::remove_cvref_t<System>;
+        static_assert(std::derived_from<SystemType, SceneSystem>,
+                      "A Scene System must derive from SceneSystem.");
+        return isSystemEnabled(std::type_index{typeid(SystemType)});
+    }
+
     void runSystems(SystemStage stage, const UpdateContext& context);
 
 private:
     struct SystemStorage;
+
+    using ComponentCopyFn =
+        std::function<void(const entt::registry&, entt::registry&, entt::entity, entt::entity)>;
+    struct ComponentCopyRegistration {
+        entt::id_type id;
+        ComponentCopyFn copy_fn;
+    };
+
+    template <typename Component>
+    static void registerCopyInto(std::unordered_map<entt::id_type, ComponentCopyRegistration>& registry)
+    {
+        registry.insert_or_assign(
+            entt::type_hash<Component>::value(),
+            ComponentCopyRegistration{
+                entt::type_hash<Component>::value(),
+                [](const entt::registry& source, entt::registry& destination,
+                   entt::entity source_entity, entt::entity destination_entity) {
+                    destination.emplace<Component>(destination_entity, source.get<Component>(source_entity));
+                },
+            });
+    }
+
+    static std::unordered_map<entt::id_type, ComponentCopyRegistration>& copyRegistry();
 
     SceneSystem& registerSystem(
         SystemStage stage,
@@ -137,6 +193,8 @@ private:
     SceneSystem* findSystem(std::type_index type) noexcept;
     const SceneSystem* findSystem(std::type_index type) const noexcept;
     bool removeSystem(std::type_index type);
+    void setSystemEnabled(std::type_index type, bool enabled);
+    bool isSystemEnabled(std::type_index type) const noexcept;
 
     entt::entity resolveEntity(const core::UUID& id) const noexcept;
     void updateWorldTransform(entt::entity entity);

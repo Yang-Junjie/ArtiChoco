@@ -26,3 +26,10 @@ target_include_directories(artichoco_entt SYSTEM INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/entt/src"
 )
 target_compile_features(artichoco_entt INTERFACE cxx_std_20)
+
+set(ENKITS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ENKITS_BUILD_C_INTERFACE OFF CACHE BOOL "" FORCE)
+set(ENKITS_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ENKITS_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(enkiTS EXCLUDE_FROM_ALL)
+set_target_properties(enkiTS PROPERTIES FOLDER "ThirdParty")

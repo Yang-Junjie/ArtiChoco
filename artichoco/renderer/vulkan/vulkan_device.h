@@ -21,6 +21,7 @@ public:
     uint32_t presentQueueFamily() const noexcept;
     bool usesCore13() const noexcept;
     bool independentBlendEnabled() const noexcept;
+    bool samplerAnisotropyEnabled() const noexcept;
 
 private:
     vk::raii::PhysicalDevice m_physical_device{nullptr};
@@ -31,6 +32,7 @@ private:
     uint32_t m_present_queue_family{0};
     bool m_uses_core_13{false};
     bool m_independent_blend_enabled{false};
+    bool m_sampler_anisotropy_enabled{false};
 };
 
 } // namespace arti::renderer::vulkan

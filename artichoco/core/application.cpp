@@ -1,6 +1,7 @@
 #include "application.h"
 #include "layer.h"
 #include "log.h"
+#include "task/task_system.h"
 
 #include <chrono>
 
@@ -112,6 +113,8 @@ void Application::initialize(const ApplicationCreateInfo& info)
     });
     m_window->init();
 
+    m_task_system = std::make_unique<TaskSystem>();
+
     ARTI_CORE_INFO("Application initialized");
 }
 
@@ -121,6 +124,7 @@ void Application::shutdown()
 
     m_layer_stack.detachAll();
     m_window.reset();
+    m_task_system.reset();
 
     ARTI_CORE_INFO("Application shutdown finished");
 }

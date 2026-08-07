@@ -13,12 +13,12 @@ struct VulkanSamplerCreateInfo {
     vk::SamplerAddressMode address_mode_v{vk::SamplerAddressMode::eRepeat};
     vk::SamplerAddressMode address_mode_w{vk::SamplerAddressMode::eRepeat};
     float mip_lod_bias{0.0f};
-    bool anisotropy_enable{false};
+    bool anisotropy_enable{true};
     float max_anisotropy{1.0f};
     bool compare_enable{false};
     vk::CompareOp compare_op{vk::CompareOp::eNever};
     float min_lod{0.0f};
-    float max_lod{0.0f};
+    float max_lod{1000.0f};
     vk::BorderColor border_color{vk::BorderColor::eIntOpaqueBlack};
     bool unnormalized_coordinates{false};
     vk::SamplerCreateFlags flags{};

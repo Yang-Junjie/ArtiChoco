@@ -1,9 +1,16 @@
 #include "vulkan_sampler.h"
 
+#include <stdexcept>
+
 namespace arti::renderer::vulkan {
 
 VulkanSampler::VulkanSampler(const VulkanDevice& device, const VulkanSamplerCreateInfo& info)
 {
+    if (info.anisotropy_enable && !device.samplerAnisotropyEnabled()) {
+        throw std::invalid_argument(
+            "Anisotropic filtering requires the samplerAnisotropy device feature, which is not enabled.");
+    }
+
     vk::SamplerCreateInfo sampler_info{};
     sampler_info.setMagFilter(info.mag_filter)
         .setMinFilter(info.min_filter)
