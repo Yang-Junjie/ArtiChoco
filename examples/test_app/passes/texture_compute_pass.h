@@ -1,5 +1,6 @@
 #pragma once
 #include "artichoco/renderer/vulkan/vulkan_pass.h"
+#include "artichoco/renderer/vulkan/vulkan_sampler.h"
 
 #include <filesystem>
 #include <memory>

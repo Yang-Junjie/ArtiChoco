@@ -91,7 +91,6 @@ Texture2D detail::TextureAccess::create(vulkan::VulkanAllocator& allocator,
     image_info.extent = vk::Extent2D{width, height};
     image_info.format = vulkan_format;
     image_info.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
-    image_info.create_sampler = true;
     impl->image = vulkan::VulkanImage{device, allocator, image_info};
     impl->owner = std::move(owner);
     impl->width = width;

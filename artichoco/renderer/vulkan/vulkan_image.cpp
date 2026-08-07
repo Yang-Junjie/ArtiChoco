@@ -35,23 +35,6 @@ VulkanImage::VulkanImage(const VulkanDevice& device, VulkanAllocator& allocator,
         .setFormat(info.format)
         .setSubresourceRange(range);
     m_image_view = vk::raii::ImageView{device.device(), view_info};
-
-    if (info.create_sampler) {
-        vk::SamplerCreateInfo sampler_info{};
-        sampler_info.setMagFilter(vk::Filter::eLinear)
-            .setMinFilter(vk::Filter::eLinear)
-            .setMipmapMode(vk::SamplerMipmapMode::eLinear)
-            .setAddressModeU(vk::SamplerAddressMode::eRepeat)
-            .setAddressModeV(vk::SamplerAddressMode::eRepeat)
-            .setAddressModeW(vk::SamplerAddressMode::eRepeat)
-            .setAnisotropyEnable(false)
-            .setCompareEnable(false)
-            .setMinLod(0.0f)
-            .setMaxLod(0.0f)
-            .setBorderColor(vk::BorderColor::eIntOpaqueBlack)
-            .setUnnormalizedCoordinates(false);
-        m_sampler = vk::raii::Sampler{device.device(), sampler_info};
-    }
 }
 
 vk::Image VulkanImage::image() const noexcept
@@ -62,11 +45,6 @@ vk::Image VulkanImage::image() const noexcept
 const vk::raii::ImageView& VulkanImage::imageView() const noexcept
 {
     return m_image_view;
-}
-
-const vk::raii::Sampler& VulkanImage::sampler() const noexcept
-{
-    return m_sampler;
 }
 
 vk::Extent2D VulkanImage::extent() const noexcept

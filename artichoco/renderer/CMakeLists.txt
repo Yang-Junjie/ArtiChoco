@@ -23,6 +23,7 @@ add_library(artichoco_renderer STATIC
     vulkan/vulkan_pipeline_cache.cpp
     vulkan/vulkan_pipeline_layout.cpp
     vulkan/vulkan_resource_state.cpp
+    vulkan/vulkan_sampler.cpp
     vulkan/vulkan_pass_context.cpp
     vulkan/vulkan_shader.cpp
     vulkan/vulkan_upload_context.cpp

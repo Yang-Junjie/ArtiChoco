@@ -127,6 +127,7 @@ struct MrtMeshPass::Impl {
             binding_sets[index].writeUniformBuffer("frame_uniforms", frame_uniform_buffers[index]);
             binding_sets[index].writeStorageBuffer("material_data", *material_buffer);
         }
+        base_color_sampler = renderer::vulkan::VulkanSampler{context.device()};
         device = &context.device();
     }
 
@@ -148,7 +149,6 @@ struct MrtMeshPass::Impl {
         renderer::vulkan::VulkanImageCreateInfo image_info;
         image_info.extent = required_extent;
         image_info.usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled;
-        image_info.create_sampler = true;
         image_info.format = color_format;
 
         color_output =
@@ -173,6 +173,7 @@ struct MrtMeshPass::Impl {
     std::unique_ptr<renderer::vulkan::VulkanShader> shader;
     std::unique_ptr<renderer::vulkan::VulkanBindingLayout> binding_layout;
     const renderer::vulkan::VulkanPipeline* pipeline{nullptr};
+    renderer::vulkan::VulkanSampler base_color_sampler;
     std::unique_ptr<renderer::vulkan::VulkanImage> color_output;
     std::unique_ptr<renderer::vulkan::VulkanImage> auxiliary_output;
     std::unique_ptr<renderer::vulkan::VulkanDepthBuffer> depth_buffer;
@@ -274,7 +275,7 @@ void MrtMeshPass::record(renderer::vulkan::VulkanPassContext& context)
     };
     m_impl->frame_uniform_buffers.at(frame.frameSlotIndex()).write(std::as_bytes(std::span{&frame_uniforms, 1}));
     bindings.writeSampledImage("base_color_texture", *texture.imageView());
-    bindings.writeSampler("base_color_sampler", *texture.sampler());
+    bindings.writeSampler("base_color_sampler", *m_impl->base_color_sampler.handle());
 
     const auto previous_output_state = m_impl->outputs_initialized ? fragmentSampledReadState() : undefinedImageState();
     const auto previous_depth_state =

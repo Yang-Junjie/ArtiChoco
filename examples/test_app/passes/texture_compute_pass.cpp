@@ -43,6 +43,7 @@ struct TextureComputePass::Impl {
         for (size_t index = 0; index < context.frameSlotCount(); ++index) {
             binding_sets.emplace_back(context.device(), context.descriptorAllocator(), *binding_layout);
         }
+        input_sampler = renderer::vulkan::VulkanSampler{context.device()};
     }
 
     void ensureOutput(renderer::vulkan::VulkanPassPrepareContext& context)
@@ -59,7 +60,6 @@ struct TextureComputePass::Impl {
         image_info.extent = required_extent;
         image_info.format = vk::Format::eR8G8B8A8Unorm;
         image_info.usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled;
-        image_info.create_sampler = true;
         output = std::make_unique<renderer::vulkan::VulkanImage>(context.device(), context.allocator(), image_info);
         output_initialized = false;
     }
@@ -69,6 +69,7 @@ struct TextureComputePass::Impl {
     std::unique_ptr<renderer::vulkan::VulkanComputeShader> shader;
     std::unique_ptr<renderer::vulkan::VulkanBindingLayout> binding_layout;
     const renderer::vulkan::VulkanComputePipeline* pipeline{nullptr};
+    renderer::vulkan::VulkanSampler input_sampler;
     std::unique_ptr<renderer::vulkan::VulkanImage> output;
     std::vector<renderer::vulkan::VulkanBindingSet> binding_sets;
     float time{0.0f};
@@ -111,7 +112,7 @@ void TextureComputePass::record(renderer::vulkan::VulkanPassContext& context)
     const auto& source_image = context.image(*m_impl->source);
     auto& bindings = m_impl->binding_sets.at(frame.frameSlotIndex());
     bindings.writeSampledImage("source_texture", *source_image.imageView());
-    bindings.writeSampler("source_sampler", *source_image.sampler());
+    bindings.writeSampler("source_sampler", *m_impl->input_sampler.handle());
     bindings.writeStorageImage("output_texture", *m_impl->output->imageView());
 
     const auto previous_state = m_impl->output_initialized ? fragmentSampledReadState() : undefinedImageState();

@@ -39,6 +39,7 @@ struct MrtCompositePass::Impl {
         for (size_t index = 0; index < context.frameSlotCount(); ++index) {
             binding_sets.emplace_back(context.device(), context.descriptorAllocator(), *binding_layout);
         }
+        output_sampler = renderer::vulkan::VulkanSampler{context.device()};
         device = &context.device();
     }
 
@@ -48,6 +49,7 @@ struct MrtCompositePass::Impl {
     std::unique_ptr<renderer::vulkan::VulkanShader> shader;
     std::unique_ptr<renderer::vulkan::VulkanBindingLayout> binding_layout;
     const renderer::vulkan::VulkanPipeline* pipeline{nullptr};
+    renderer::vulkan::VulkanSampler output_sampler;
     std::vector<renderer::vulkan::VulkanBindingSet> binding_sets;
 };
 
@@ -79,7 +81,7 @@ void MrtCompositePass::record(renderer::vulkan::VulkanPassContext& context)
     auto& bindings = m_impl->binding_sets.at(frame.frameSlotIndex());
     bindings.writeSampledImage("color_output", *color_output.imageView());
     bindings.writeSampledImage("auxiliary_output", *auxiliary_output.imageView());
-    bindings.writeSampler("output_sampler", *color_output.sampler());
+    bindings.writeSampler("output_sampler", *m_impl->output_sampler.handle());
 
     const auto to_color_attachment = renderer::vulkan::makeImageBarrier(
         frame.colorImage(), colorSubresourceRange(), undefinedImageState(), colorAttachmentWriteState());
