@@ -4,6 +4,7 @@ add_library(artichoco_renderer STATIC
     renderer_log.cpp
     slang_compiler.cpp
     texture_2d.cpp
+    texture_cube.cpp
     vertex_buffer.cpp
     vulkan/vulkan_allocator.cpp
     vulkan/vulkan_buffer.cpp

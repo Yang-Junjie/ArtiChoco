@@ -7,10 +7,12 @@ add_executable(renderer_showcase
     passes/common/image_display_pass.cpp
     passes/common/indexed_graphics_pass.cpp
     passes/compute_texture/compute_texture_pass.cpp
+    passes/cubemap/cubemap_pass.cpp
     passes/depth_test/depth_test_pass.cpp
     passes/instancing/instancing_pass.cpp
     passes/offscreen/offscreen_pass.cpp
     passes/push_constants/push_constants_pass.cpp
+    passes/render_to_cubemap/render_to_cubemap_pass.cpp
     passes/textured_quad/textured_quad_pass.cpp
     passes/triangle/triangle_pass.cpp
     passes/uniform_buffer/uniform_buffer_pass.cpp
@@ -20,6 +22,7 @@ set(_arti_renderer_showcase_shader_directory "${CMAKE_CURRENT_BINARY_DIR}/shader
 set(_arti_renderer_showcase_shader_names
     alpha_blending.slang
     compute_texture.slang
+    cubemap.slang
     depth_test.slang
     image_display.slang
     instancing.slang

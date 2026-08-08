@@ -1,7 +1,7 @@
 #pragma once
-#include "detail/deferred_resource_owner.h"
-#include "index_buffer.h"
-#include "vertex_buffer.h"
+#include "artichoco/renderer/detail/deferred_resource_owner.h"
+#include "artichoco/renderer/index_buffer.h"
+#include "artichoco/renderer/vertex_buffer.h"
 
 #include <vulkan/vulkan.hpp>
 

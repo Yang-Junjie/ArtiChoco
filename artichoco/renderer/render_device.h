@@ -2,6 +2,7 @@
 #include "artichoco/core/window.h"
 #include "index_buffer.h"
 #include "texture_2d.h"
+#include "texture_cube.h"
 #include "vertex_buffer.h"
 
 #include <cstddef>
@@ -43,8 +44,13 @@ public:
     IndexBuffer createIndexBuffer(std::span<const std::byte> data, uint32_t index_count,
             IndexType index_type = IndexType::UInt32);
 
-    Texture2D createTexture2D(std::span<const std::byte> rgba_pixels, uint32_t width,
-            uint32_t height, TextureFormat format = TextureFormat::RGBA8Srgb);
+    Texture2D createTexture2D(std::span<const std::byte> texels, uint32_t width, uint32_t height,
+            TextureFormat format = TextureFormat::RGBA8Srgb);
+
+    TextureCube createTextureCube(const TextureCubeFaces& faces, uint32_t size,
+            TextureFormat format = TextureFormat::RGBA8Srgb);
+    TextureCube createTextureCube(std::span<const TextureCubeMipData> mip_levels,
+            TextureFormat format = TextureFormat::RGBA8Srgb);
 
     bool renderFrame(std::span<vulkan::VulkanPass* const> passes);
     void requestSwapchainRecreation() noexcept;

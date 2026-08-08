@@ -1,4 +1,5 @@
 #pragma once
+#include "texture_format.h"
 
 #include <cstdint>
 #include <memory>
@@ -8,11 +9,6 @@ class TextureAccess;
 }
 
 namespace arti::renderer {
-
-enum class TextureFormat {
-    RGBA8Unorm,
-    RGBA8Srgb,
-};
 
 class Texture2D {
 public:

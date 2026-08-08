@@ -1,6 +1,6 @@
 #include "vertex_buffer.h"
 
-#include "buffer_access.h"
+#include "detail/buffer_access.h"
 #include "vulkan/vulkan_allocator.h"
 #include "vulkan/vulkan_resource_state.h"
 #include "vulkan/vulkan_upload_context.h"

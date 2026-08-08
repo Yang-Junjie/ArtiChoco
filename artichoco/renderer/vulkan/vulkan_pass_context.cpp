@@ -1,5 +1,5 @@
-#include "artichoco/renderer/buffer_access.h"
-#include "artichoco/renderer/texture_access.h"
+#include "artichoco/renderer/detail/buffer_access.h"
+#include "artichoco/renderer/detail/texture_access.h"
 #include "vulkan_allocator.h"
 #include "vulkan_descriptor_allocator.h"
 #include "vulkan_device.h"
@@ -99,6 +99,14 @@ const VulkanImage& VulkanPassContext::image(const Texture2D& texture) const
 {
     if (!detail::TextureAccess::isOwnedBy(texture, m_resource_owner)) {
         throw std::invalid_argument("The texture belongs to another RenderDevice.");
+    }
+    return detail::TextureAccess::image(texture);
+}
+
+const VulkanImage& VulkanPassContext::image(const TextureCube& texture) const
+{
+    if (!detail::TextureAccess::isOwnedBy(texture, m_resource_owner)) {
+        throw std::invalid_argument("The cube texture belongs to another RenderDevice.");
     }
     return detail::TextureAccess::image(texture);
 }

@@ -1,6 +1,6 @@
 #include "index_buffer.h"
 
-#include "buffer_access.h"
+#include "detail/buffer_access.h"
 #include "vulkan/vulkan_allocator.h"
 #include "vulkan/vulkan_resource_state.h"
 #include "vulkan/vulkan_upload_context.h"
@@ -48,6 +48,7 @@ IndexBuffer detail::BufferAccess::createIndexBuffer(vulkan::VulkanAllocator& all
     buffer_info.setSize(data.size_bytes())
             .setUsage(vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer)
             .setSharingMode(vk::SharingMode::eExclusive);
+            
     VmaAllocationCreateInfo allocation_info{};
     allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
@@ -56,6 +57,7 @@ IndexBuffer detail::BufferAccess::createIndexBuffer(vulkan::VulkanAllocator& all
     impl->owner = owner;
     impl->index_count = index_count;
     impl->index_type = index_type;
+
     const vulkan::VulkanBufferState index_read{
         vk::PipelineStageFlagBits2::eIndexInput,
         vk::AccessFlagBits2::eIndexRead,

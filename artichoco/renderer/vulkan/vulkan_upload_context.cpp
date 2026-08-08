@@ -60,16 +60,43 @@ void VulkanUploadContext::uploadImageRGBA8(std::span<const std::byte> data,
         throw std::invalid_argument("An RGBA image upload requires matching data and dimensions.");
     }
 
-    auto staging = createStagingBuffer(data);
-    beginUpload();
-    VulkanCommandRecorder commands{m_device, m_command_buffer};
-
     vk::ImageSubresourceRange range{};
     range.setAspectMask(vk::ImageAspectFlagBits::eColor)
         .setBaseMipLevel(0)
         .setLevelCount(1)
         .setBaseArrayLayer(0)
         .setLayerCount(1);
+    vk::ImageSubresourceLayers layers{};
+    layers.setAspectMask(vk::ImageAspectFlagBits::eColor).setMipLevel(0).setBaseArrayLayer(0).setLayerCount(1);
+    vk::BufferImageCopy copy{};
+    copy.setBufferOffset(0)
+        .setBufferRowLength(0)
+        .setBufferImageHeight(0)
+        .setImageSubresource(layers)
+        .setImageOffset({0, 0, 0})
+        .setImageExtent({extent.width, extent.height, 1});
+    uploadImage(data,
+                destination,
+                std::span<const vk::BufferImageCopy>{&copy, 1},
+                range,
+                final_state);
+}
+
+void VulkanUploadContext::uploadImage(std::span<const std::byte> data,
+                                      vk::Image destination,
+                                      std::span<const vk::BufferImageCopy> regions,
+                                      vk::ImageSubresourceRange destination_range,
+                                      VulkanImageState final_state)
+{
+    if (data.empty() || !destination || regions.empty() || !destination_range.aspectMask ||
+        destination_range.levelCount == 0 || destination_range.layerCount == 0) {
+        throw std::invalid_argument("An image upload requires data, copy regions, and a destination range.");
+    }
+
+    auto staging = createStagingBuffer(data);
+    beginUpload();
+    VulkanCommandRecorder commands{m_device, m_command_buffer};
+
     const VulkanImageState undefined{
         vk::PipelineStageFlagBits2::eNone,
         vk::AccessFlagBits2::eNone,
@@ -80,20 +107,11 @@ void VulkanUploadContext::uploadImageRGBA8(std::span<const std::byte> data,
         vk::AccessFlagBits2::eTransferWrite,
         vk::ImageLayout::eTransferDstOptimal,
     };
-    commands.imageBarrier(makeImageBarrier(destination, range, undefined, transfer_write));
+    commands.imageBarrier(makeImageBarrier(destination, destination_range, undefined, transfer_write));
+    commands.handle().copyBufferToImage(
+        staging.handle(), destination, vk::ImageLayout::eTransferDstOptimal, regions);
 
-    vk::ImageSubresourceLayers layers{};
-    layers.setAspectMask(vk::ImageAspectFlagBits::eColor).setMipLevel(0).setBaseArrayLayer(0).setLayerCount(1);
-    vk::BufferImageCopy copy{};
-    copy.setBufferOffset(0)
-        .setBufferRowLength(0)
-        .setBufferImageHeight(0)
-        .setImageSubresource(layers)
-        .setImageOffset({0, 0, 0})
-        .setImageExtent({extent.width, extent.height, 1});
-    commands.handle().copyBufferToImage(staging.handle(), destination, vk::ImageLayout::eTransferDstOptimal, copy);
-
-    commands.imageBarrier(makeImageBarrier(destination, range, transfer_write, final_state));
+    commands.imageBarrier(makeImageBarrier(destination, destination_range, transfer_write, final_state));
     commands.end();
 
     submitAndWait();

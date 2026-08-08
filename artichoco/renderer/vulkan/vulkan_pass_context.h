@@ -6,6 +6,7 @@
 namespace arti::renderer {
 class IndexBuffer;
 class Texture2D;
+class TextureCube;
 class VertexBuffer;
 
 namespace detail {
@@ -66,6 +67,7 @@ public:
     vk::Buffer buffer(const VertexBuffer& vertex_buffer) const;
     vk::Buffer buffer(const IndexBuffer& index_buffer) const;
     const VulkanImage& image(const Texture2D& texture) const;
+    const VulkanImage& image(const TextureCube& texture) const;
 
 private:
     VulkanFrameContext& m_frame;

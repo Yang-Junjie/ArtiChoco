@@ -132,6 +132,24 @@ procedural full-screen geometry.
 The MRT producer transitions every output from its known prior state to attachment
 write, then to the state required by the next sampling pass.
 
+## Texture resources and cube images
+
+`Texture2D` and `TextureCube` are public, move-only resources owned by the
+`RenderDevice`. Cube faces are supplied in Vulkan layer order: positive X,
+negative X, positive Y, negative Y, positive Z, then negative Z. Every face must
+contain the same square extent and format. `RGBA8Unorm`, `RGBA8Srgb`, and
+`RGBA16Float` are supported. Cube mip chains are explicit: callers provide every
+level, and each size must halve down from the base. The upload path does not
+silently generate missing mips.
+
+`VulkanImageCreateInfo` expresses mip count, array-layer count, image flags, and
+the primary view type. A cube uses six layers, `eCubeCompatible`, and an `eCube`
+primary sampled view. `VulkanImage::createView()` creates validated restricted
+views, while `createLayerView()` is the single-mip, single-layer convenience used
+for cube-face color attachments. Multi-layer and multi-mip initial data is
+uploaded through explicit `vk::BufferImageCopy` regions and one subresource range;
+image state remains caller-managed after that upload.
+
 Pipeline objects, binding layouts, binding sets, and pass-owned images must outlive
 every submitted frame slot that references them. For now, destroy or replace those
 objects only after `Renderer::waitIdle()`. Connecting pass-owned Vulkan objects to

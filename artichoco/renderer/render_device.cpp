@@ -13,8 +13,8 @@
 #include "artichoco/renderer/vulkan/vulkan_surface.h"
 #include "artichoco/renderer/vulkan/vulkan_surface_source.h"
 #include "artichoco/renderer/vulkan/vulkan_upload_context.h"
-#include "buffer_access.h"
-#include "texture_access.h"
+#include "detail/buffer_access.h"
+#include "detail/texture_access.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -64,8 +64,10 @@ struct RenderDevice::Impl final : detail::DeferredResourceOwner,
     IndexBuffer createIndexBuffer(std::span<const std::byte> data, uint32_t index_count,
             IndexType index_type);
 
-    Texture2D createTexture2D(std::span<const std::byte> rgba_pixels, uint32_t width,
-            uint32_t height, TextureFormat format);
+    Texture2D createTexture2D(std::span<const std::byte> texels, uint32_t width, uint32_t height,
+            TextureFormat format);
+    TextureCube createTextureCube(std::span<const TextureCubeMipData> mip_levels,
+            TextureFormat format);
 
 
 private:
@@ -133,10 +135,16 @@ IndexBuffer RenderDevice::Impl::createIndexBuffer(std::span<const std::byte> dat
             shared_from_this(), data, index_count, index_type);
 }
 
-Texture2D RenderDevice::Impl::createTexture2D(std::span<const std::byte> rgba_pixels,
-        uint32_t width, uint32_t height, TextureFormat format) {
+Texture2D RenderDevice::Impl::createTexture2D(std::span<const std::byte> texels, uint32_t width,
+        uint32_t height, TextureFormat format) {
     return detail::TextureAccess::create(m_allocator, m_upload_context, m_device,
-            shared_from_this(), rgba_pixels, width, height, format);
+            shared_from_this(), texels, width, height, format);
+}
+
+TextureCube RenderDevice::Impl::createTextureCube(std::span<const TextureCubeMipData> mip_levels,
+        TextureFormat format) {
+    return detail::TextureAccess::createCube(m_allocator, m_upload_context, m_device,
+            shared_from_this(), mip_levels, format);
 }
 
 #pragma endregion ResourceCreation
@@ -202,9 +210,20 @@ IndexBuffer RenderDevice::createIndexBuffer(std::span<const std::byte> data, uin
     return m_impl->createIndexBuffer(data, index_count, index_type);
 }
 
-Texture2D RenderDevice::createTexture2D(std::span<const std::byte> rgba_pixels, uint32_t width,
+Texture2D RenderDevice::createTexture2D(std::span<const std::byte> texels, uint32_t width,
         uint32_t height, TextureFormat format) {
-    return m_impl->createTexture2D(rgba_pixels, width, height, format);
+    return m_impl->createTexture2D(texels, width, height, format);
+}
+
+TextureCube RenderDevice::createTextureCube(const TextureCubeFaces& faces, uint32_t size,
+        TextureFormat format) {
+    const TextureCubeMipData mip{ size, faces };
+    return m_impl->createTextureCube(std::span<const TextureCubeMipData>{ &mip, 1 }, format);
+}
+
+TextureCube RenderDevice::createTextureCube(std::span<const TextureCubeMipData> mip_levels,
+        TextureFormat format) {
+    return m_impl->createTextureCube(mip_levels, format);
 }
 
 bool RenderDevice::renderFrame(std::span<vulkan::VulkanPass* const> passes) {

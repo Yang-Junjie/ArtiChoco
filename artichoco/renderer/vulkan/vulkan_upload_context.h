@@ -25,6 +25,11 @@ public:
                           vk::Image destination,
                           vk::Extent2D extent,
                           VulkanImageState final_state);
+    void uploadImage(std::span<const std::byte> data,
+                     vk::Image destination,
+                     std::span<const vk::BufferImageCopy> regions,
+                     vk::ImageSubresourceRange destination_range,
+                     VulkanImageState final_state);
 
 private:
     const VulkanDevice& m_device;
