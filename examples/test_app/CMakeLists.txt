@@ -11,20 +11,20 @@ add_executable(test_app
 )
 
 set(_arti_test_mesh_shader
-    "${PROJECT_SOURCE_DIR}/artichoco/renderer/shaders/mesh.slang"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/mesh.slang"
 )
 set(_arti_test_shader_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 set(_arti_test_mesh_shader_output
     "${_arti_test_shader_directory}/mesh.slang"
 )
 set(_arti_test_compute_shader
-    "${PROJECT_SOURCE_DIR}/artichoco/renderer/shaders/texture_compute.slang"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/texture_compute.slang"
 )
 set(_arti_test_compute_shader_output
     "${_arti_test_shader_directory}/texture_compute.slang"
 )
 set(_arti_test_composite_shader
-    "${PROJECT_SOURCE_DIR}/artichoco/renderer/shaders/mrt_composite.slang"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/mrt_composite.slang"
 )
 set(_arti_test_composite_shader_output
     "${_arti_test_shader_directory}/mrt_composite.slang"
