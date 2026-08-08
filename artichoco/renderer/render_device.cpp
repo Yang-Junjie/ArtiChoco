@@ -1,3 +1,4 @@
+#include "render_device.h"
 #include "artichoco/renderer/detail/deferred_release_queue.h"
 #include "artichoco/renderer/detail/deferred_resource_owner.h"
 #include "artichoco/renderer/renderer_log.h"
@@ -13,7 +14,6 @@
 #include "artichoco/renderer/vulkan/vulkan_surface_source.h"
 #include "artichoco/renderer/vulkan/vulkan_upload_context.h"
 #include "buffer_access.h"
-#include "render_device.h"
 #include "texture_access.h"
 
 #include <algorithm>
@@ -25,8 +25,8 @@ namespace arti::renderer {
 namespace {
 
 // ensure the VulkanSurfaceSource is not null and not transfer ownership.
-vulkan::VulkanSurfaceSource& requireSurfaceSource(const std::unique_ptr<vulkan::VulkanSurfaceSource>& source)
-{
+vulkan::VulkanSurfaceSource& requireSurfaceSource(
+        const std::unique_ptr<vulkan::VulkanSurfaceSource>& source) {
     if (!source) {
         throw std::invalid_argument("RenderDevice requires a surface source.");
     }
@@ -34,8 +34,7 @@ vulkan::VulkanSurfaceSource& requireSurfaceSource(const std::unique_ptr<vulkan::
 }
 
 // Create a VulkanContextCreateInfo from RenderDeviceCreateInfo
-vulkan::VulkanContextCreateInfo makeContextCreateInfo(const RenderDeviceCreateInfo& info)
-{
+vulkan::VulkanContextCreateInfo makeContextCreateInfo(const RenderDeviceCreateInfo& info) {
     vulkan::VulkanContextCreateInfo context_info;
     context_info.application_name = info.application_name;
     context_info.enable_validation = info.enable_validation;
@@ -46,28 +45,28 @@ vulkan::VulkanContextCreateInfo makeContextCreateInfo(const RenderDeviceCreateIn
 #pragma endregion HelperFunctions
 
 #pragma region RenderDeviceImpl
-struct RenderDevice::Impl final : detail::DeferredResourceOwner, std::enable_shared_from_this<RenderDevice::Impl> {
-    Impl(core::Window& window,
-         std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
-         const RenderDeviceCreateInfo& info);
+struct RenderDevice::Impl final : detail::DeferredResourceOwner,
+                                  std::enable_shared_from_this<RenderDevice::Impl> {
+    Impl(core::Window& window, std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
+            const RenderDeviceCreateInfo& info);
     ~Impl();
 
     void deferRelease(std::packaged_task<void()> release) override;
     void shutdown();
 
-    bool renderFrame(std::span<vulkan::VulkanPass* const> passes, const RenderFrameData& frame_data);
+    bool renderFrame(std::span<vulkan::VulkanPass* const> passes);
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
 
-    VertexBuffer createVertexBuffer(std::span<const std::byte> data, 
-                                    uint32_t vertex_count, VertexBufferLayout layout);
+    VertexBuffer createVertexBuffer(std::span<const std::byte> data, uint32_t vertex_count,
+            VertexBufferLayout layout);
 
-    IndexBuffer  createIndexBuffer(std::span<const std::byte> data, 
-                                   uint32_t index_count, IndexType index_type);
+    IndexBuffer createIndexBuffer(std::span<const std::byte> data, uint32_t index_count,
+            IndexType index_type);
 
-    Texture2D    createTexture2D(std::span<const std::byte> rgba_pixels, 
-                                 uint32_t width, uint32_t height, TextureFormat format);
-    
+    Texture2D createTexture2D(std::span<const std::byte> rgba_pixels, uint32_t width,
+            uint32_t height, TextureFormat format);
+
 
 private:
     std::unique_ptr<vulkan::VulkanSurfaceSource> m_surface_source;
@@ -80,42 +79,39 @@ private:
     vulkan::VulkanPipelineCache m_pipeline_cache;
     vulkan::VulkanFrameManager m_frame_manager;
     detail::DeferredReleaseQueue m_release_queue;
-    bool m_shutdown{false};
+    bool m_shutdown{ false };
 };
 
 #pragma endregion RenderDeviceImpl
 RenderDevice::Impl::Impl(core::Window& window,
-                     std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
-                     const RenderDeviceCreateInfo& info)
-    : m_surface_source(std::move(surface_source)),
-      m_context(makeContextCreateInfo(info), requireSurfaceSource(m_surface_source)),
-      m_surface(m_context.instance(), requireSurfaceSource(m_surface_source)),
-      m_device(m_context.instance(), m_surface.handle()),
-      m_allocator(m_context, m_device),
-      m_upload_context(m_device, m_allocator),
-      m_descriptor_allocator(m_device),
-      m_pipeline_cache(m_device),
-      m_frame_manager(window, m_device, m_allocator, m_surface, info.frames_in_flight),
-      m_release_queue(m_frame_manager.frameSlotCount())
-{
-    getLogChannel().info("Initialized Vulkan renderer with {} frames in flight", m_frame_manager.frameSlotCount());
+        std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
+        const RenderDeviceCreateInfo& info)
+        : m_surface_source(std::move(surface_source)),
+          m_context(makeContextCreateInfo(info), requireSurfaceSource(m_surface_source)),
+          m_surface(m_context.instance(), requireSurfaceSource(m_surface_source)),
+          m_device(m_context.instance(), m_surface.handle()),
+          m_allocator(m_context, m_device),
+          m_upload_context(m_device, m_allocator),
+          m_descriptor_allocator(m_device),
+          m_pipeline_cache(m_device),
+          m_frame_manager(window, m_device, m_allocator, m_surface, info.frames_in_flight),
+          m_release_queue(m_frame_manager.frameSlotCount()) {
+    getLogChannel().info("Initialized Vulkan renderer with {} frames in flight",
+            m_frame_manager.frameSlotCount());
 }
 
-RenderDevice::Impl::~Impl()
-{
+RenderDevice::Impl::~Impl() {
     try {
         shutdown();
     } catch (...) {
     }
 }
 
-void RenderDevice::Impl::deferRelease(std::packaged_task<void()> release)
-{
+void RenderDevice::Impl::deferRelease(std::packaged_task<void()> release) {
     m_release_queue.defer(std::move(release));
 }
 
-void RenderDevice::Impl::shutdown()
-{
+void RenderDevice::Impl::shutdown() {
     if (m_shutdown) {
         return;
     }
@@ -126,41 +122,29 @@ void RenderDevice::Impl::shutdown()
 
 #pragma region ResourceCreation
 VertexBuffer RenderDevice::Impl::createVertexBuffer(std::span<const std::byte> data,
-                                                uint32_t vertex_count,
-                                                VertexBufferLayout layout)
-{
-    return detail::BufferAccess::createVertexBuffer(
-               m_allocator, 
-          m_upload_context, 
-                    shared_from_this(), 
-                          data, vertex_count, 
-                   std::move(layout));
+        uint32_t vertex_count, VertexBufferLayout layout) {
+    return detail::BufferAccess::createVertexBuffer(m_allocator, m_upload_context,
+            shared_from_this(), data, vertex_count, std::move(layout));
 }
 
-IndexBuffer
-    RenderDevice::Impl::createIndexBuffer(std::span<const std::byte> data, uint32_t index_count, IndexType index_type)
-{
-    return detail::BufferAccess::createIndexBuffer(
-        m_allocator, m_upload_context, shared_from_this(), data, index_count, index_type);
+IndexBuffer RenderDevice::Impl::createIndexBuffer(std::span<const std::byte> data,
+        uint32_t index_count, IndexType index_type) {
+    return detail::BufferAccess::createIndexBuffer(m_allocator, m_upload_context,
+            shared_from_this(), data, index_count, index_type);
 }
 
 Texture2D RenderDevice::Impl::createTexture2D(std::span<const std::byte> rgba_pixels,
-                                          uint32_t width,
-                                          uint32_t height,
-                                          TextureFormat format)
-{
-    return detail::TextureAccess::create(
-        m_allocator, m_upload_context, m_device, shared_from_this(), rgba_pixels, width, height, format);
+        uint32_t width, uint32_t height, TextureFormat format) {
+    return detail::TextureAccess::create(m_allocator, m_upload_context, m_device,
+            shared_from_this(), rgba_pixels, width, height, format);
 }
 
 #pragma endregion ResourceCreation
 
 #pragma region RenderDeviceFrame
-bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes, const RenderFrameData& frame_data)
-{
-    if (passes.empty() || std::ranges::any_of(passes, [](const vulkan::VulkanPass* pass) {
-            return pass == nullptr;
-        })) {
+bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes) {
+    if (passes.empty() || std::ranges::any_of(passes,
+                                  [](const vulkan::VulkanPass* pass) { return pass == nullptr; })) {
         throw std::invalid_argument("RenderDevice requires at least one valid Vulkan pass.");
     }
 
@@ -172,7 +156,7 @@ bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes
         m_pipeline_cache,
         m_frame_manager.frameSlotCount(),
     };
-    for (vulkan::VulkanPass* pass : passes) {
+    for (vulkan::VulkanPass* pass: passes) {
         pass->prepare(prepare_context);
     }
 
@@ -185,8 +169,8 @@ bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes
     }
 
     auto& frame = *begin_result.frame;
-    vulkan::VulkanPassContext pass_context{frame.context(), this, m_pipeline_cache, frame_data};
-    for (vulkan::VulkanPass* pass : passes) {
+    vulkan::VulkanPassContext pass_context{ frame.context(), this, m_pipeline_cache };
+    for (vulkan::VulkanPass* pass: passes) {
         pass->record(pass_context);
     }
     const size_t submitted_frame_slot = frame.submit();
@@ -195,59 +179,40 @@ bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes
 }
 
 #pragma endregion RenderDeviceFrame
-void RenderDevice::Impl::requestSwapchainRecreation() noexcept
-{
+void RenderDevice::Impl::requestSwapchainRecreation() noexcept {
     m_frame_manager.requestSwapchainRecreation();
 }
 
-void RenderDevice::Impl::waitIdle() const
-{
-    m_frame_manager.waitIdle();
-}
+void RenderDevice::Impl::waitIdle() const { m_frame_manager.waitIdle(); }
 
 RenderDevice::RenderDevice(core::Window& window,
-                   std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
-                   const RenderDeviceCreateInfo& info)
-    : m_impl(std::make_shared<Impl>(window, std::move(surface_source), info))
-{}
+        std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
+        const RenderDeviceCreateInfo& info)
+        : m_impl(std::make_shared<Impl>(window, std::move(surface_source), info)) {}
 
-RenderDevice::~RenderDevice()
-{
-    m_impl->shutdown();
-}
+RenderDevice::~RenderDevice() { m_impl->shutdown(); }
 
-VertexBuffer
-    RenderDevice::createVertexBuffer(std::span<const std::byte> data, uint32_t vertex_count, VertexBufferLayout layout)
-{
+VertexBuffer RenderDevice::createVertexBuffer(std::span<const std::byte> data,
+        uint32_t vertex_count, VertexBufferLayout layout) {
     return m_impl->createVertexBuffer(data, vertex_count, std::move(layout));
 }
 
-IndexBuffer RenderDevice::createIndexBuffer(std::span<const std::byte> data, uint32_t index_count, IndexType index_type)
-{
+IndexBuffer RenderDevice::createIndexBuffer(std::span<const std::byte> data, uint32_t index_count,
+        IndexType index_type) {
     return m_impl->createIndexBuffer(data, index_count, index_type);
 }
 
-Texture2D RenderDevice::createTexture2D(std::span<const std::byte> rgba_pixels,
-                                    uint32_t width,
-                                    uint32_t height,
-                                    TextureFormat format)
-{
+Texture2D RenderDevice::createTexture2D(std::span<const std::byte> rgba_pixels, uint32_t width,
+        uint32_t height, TextureFormat format) {
     return m_impl->createTexture2D(rgba_pixels, width, height, format);
 }
 
-bool RenderDevice::renderFrame(std::span<vulkan::VulkanPass* const> passes, const RenderFrameData& frame_data)
-{
-    return m_impl->renderFrame(passes, frame_data);
+bool RenderDevice::renderFrame(std::span<vulkan::VulkanPass* const> passes) {
+    return m_impl->renderFrame(passes);
 }
 
-void RenderDevice::requestSwapchainRecreation() noexcept
-{
-    m_impl->requestSwapchainRecreation();
-}
+void RenderDevice::requestSwapchainRecreation() noexcept { m_impl->requestSwapchainRecreation(); }
 
-void RenderDevice::waitIdle() const
-{
-    m_impl->waitIdle();
-}
+void RenderDevice::waitIdle() const { m_impl->waitIdle(); }
 
 } // namespace arti::renderer

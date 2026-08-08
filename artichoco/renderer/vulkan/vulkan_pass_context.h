@@ -1,6 +1,4 @@
 #pragma once
-#include "artichoco/renderer/render_frame_data.h"
-
 #include <cstddef>
 
 #include <vulkan/vulkan.hpp>
@@ -57,8 +55,7 @@ class VulkanPassContext {
 public:
     VulkanPassContext(VulkanFrameContext& frame,
                       const detail::DeferredResourceOwner* resource_owner,
-                      VulkanPipelineCache& pipeline_cache,
-                      const RenderFrameData& frame_data) noexcept;
+                      VulkanPipelineCache& pipeline_cache) noexcept;
 
     VulkanPassContext(const VulkanPassContext&) = delete;
     VulkanPassContext& operator=(const VulkanPassContext&) = delete;
@@ -66,7 +63,6 @@ public:
     VulkanFrameContext& frame() const noexcept;
     VulkanCommandRecorder& commands() const noexcept;
     VulkanPipelineCache& pipelineCache() const noexcept;
-    const RenderFrameData& frameData() const noexcept;
     vk::Buffer buffer(const VertexBuffer& vertex_buffer) const;
     vk::Buffer buffer(const IndexBuffer& index_buffer) const;
     const VulkanImage& image(const Texture2D& texture) const;
@@ -75,7 +71,6 @@ private:
     VulkanFrameContext& m_frame;
     const detail::DeferredResourceOwner* m_resource_owner{nullptr};
     VulkanPipelineCache& m_pipeline_cache;
-    const RenderFrameData& m_frame_data;
 };
 
 } // namespace vulkan

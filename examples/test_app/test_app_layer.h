@@ -32,8 +32,10 @@ public:
 private:
     void verifyHierarchy();
     void verifySnapshot();
+    void verifySerialization();
     void verifyTaskSystem();
     void verifyMultiEntity();
+    void verifyProject();
 
 private:
     bool m_smoke_vulkan{false};

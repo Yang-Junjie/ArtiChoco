@@ -7,17 +7,12 @@ namespace arti::scene {
 
 class Scene;
 
-enum class SystemStage : std::uint8_t {
-    FixedUpdate,
-    Update,
-    LateUpdate,
-    RenderExtract
-};
+enum class SystemStage : std::uint8_t { FixedUpdate, Update, LateUpdate, RenderExtract };
 
 struct UpdateContext {
     core::Timestep deltaTime{};
     core::Timestep fixedDeltaTime{};
-    std::uint64_t frameIndex{0};
+    std::uint64_t frameIndex{ 0 };
 };
 
 class SceneSystem {

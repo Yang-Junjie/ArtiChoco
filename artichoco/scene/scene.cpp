@@ -1,4 +1,5 @@
 #include "scene.h"
+#include "scene_log.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -9,8 +10,7 @@ namespace arti::scene {
 
 namespace {
 
-bool isValidSystemStage(SystemStage stage) noexcept
-{
+bool isValidSystemStage(SystemStage stage) noexcept {
     switch (stage) {
         case SystemStage::FixedUpdate:
         case SystemStage::Update:
@@ -28,24 +28,21 @@ struct Scene::SystemStorage {
         SystemStage stage;
         std::type_index type;
         std::unique_ptr<SceneSystem> system;
-        bool enabled{true};
+        bool enabled{ true };
     };
 
     std::vector<Entry> entries;
-    bool executing{false};
-    bool inLifecycleCallback{false};
+    bool executing{ false };
+    bool inLifecycleCallback{ false };
 };
 
 Scene::Scene()
-    : m_system_storage(std::make_unique<SystemStorage>())
-{}
+        : m_system_storage(std::make_unique<SystemStorage>()) {}
 
-Scene::~Scene()
-{
+Scene::~Scene() {
     m_system_storage->inLifecycleCallback = true;
-    for (auto entry = m_system_storage->entries.rbegin();
-         entry != m_system_storage->entries.rend();
-         ++entry) {
+    for (auto entry = m_system_storage->entries.rbegin(); entry != m_system_storage->entries.rend();
+            ++entry) {
         try {
             entry->system->onDetach(*this);
         } catch (...) {
@@ -54,8 +51,7 @@ Scene::~Scene()
     }
 }
 
-Entity Scene::createEntity(std::string tag)
-{
+Entity Scene::createEntity(std::string tag) {
     core::UUID id;
     do {
         id = core::UUID::generate();
@@ -63,8 +59,7 @@ Entity Scene::createEntity(std::string tag)
     return createEntityWithUUID(id, std::move(tag));
 }
 
-Entity Scene::createEntityWithUUID(core::UUID id, std::string tag)
-{
+Entity Scene::createEntityWithUUID(core::UUID id, std::string tag) {
     if (!id.isValid()) {
         throw std::invalid_argument("An Entity requires a valid UUID.");
     }
@@ -72,6 +67,7 @@ Entity Scene::createEntityWithUUID(core::UUID id, std::string tag)
         throw std::invalid_argument("The Entity UUID already exists in this Scene.");
     }
 
+    const std::string tag_name = tag;
     const entt::entity handle = m_registry.create();
     try {
         m_registry.emplace<IDComponent>(handle, id);
@@ -87,35 +83,41 @@ Entity Scene::createEntityWithUUID(core::UUID id, std::string tag)
         m_registry.destroy(handle);
         throw;
     }
-    return Entity{handle, m_registry};
+    getLogChannel().debug("Created entity '{}' ({})", tag_name, id.toString());
+    return Entity{ handle, m_registry };
 }
 
-void Scene::destroyEntity(Entity entity)
-{
+void Scene::destroyEntity(Entity entity) {
     if (!isValid(entity)) {
-        throw std::invalid_argument("The Entity does not belong to this Scene or is no longer valid.");
+        throw std::invalid_argument(
+                "The Entity does not belong to this Scene or is no longer valid.");
     }
 
     std::vector<entt::entity> subtree;
     collectSubtree(entity.m_handle, subtree);
+    const std::string tag = m_registry.get<TagComponent>(entity.m_handle).tag;
     for (auto it = subtree.rbegin(); it != subtree.rend(); ++it) {
         const core::UUID id = m_registry.get<IDComponent>(*it).id;
         m_entity_lookup.erase(id);
         m_registry.destroy(*it);
     }
+    getLogChannel().debug("Destroyed entity '{}' ({} including descendants)", tag, subtree.size());
 }
 
-void Scene::setParent(Entity child, Entity parent)
-{
+void Scene::setParent(Entity child, Entity parent) {
     if (!isValid(child) || !isValid(parent)) {
-        throw std::invalid_argument("The Entity does not belong to this Scene or is no longer valid.");
+        throw std::invalid_argument(
+                "The Entity does not belong to this Scene or is no longer valid.");
     }
     if (child.m_handle == parent.m_handle) {
+        getLogChannel().warn("Rejected parent assignment: an Entity cannot be its own parent.");
         throw std::invalid_argument("An Entity cannot be its own parent.");
     }
 
     for (entt::entity cursor = parent.m_handle; cursor != entt::null;) {
         if (cursor == child.m_handle) {
+            getLogChannel().warn(
+                    "Rejected parent assignment: the relationship would create a cycle.");
             throw std::invalid_argument("The requested parent relationship would create a cycle.");
         }
         const auto& parent_component = m_registry.get<ParentComponent>(cursor);
@@ -129,17 +131,16 @@ void Scene::setParent(Entity child, Entity parent)
     updateWorldTransform(child.m_handle);
 }
 
-void Scene::detachFromParent(Entity entity)
-{
+void Scene::detachFromParent(Entity entity) {
     if (!isValid(entity)) {
-        throw std::invalid_argument("The Entity does not belong to this Scene or is no longer valid.");
+        throw std::invalid_argument(
+                "The Entity does not belong to this Scene or is no longer valid.");
     }
     m_registry.get<ParentComponent>(entity.m_handle).parent_id = {};
     updateWorldTransform(entity.m_handle);
 }
 
-Entity Scene::getParent(Entity entity) noexcept
-{
+Entity Scene::getParent(Entity entity) noexcept {
     if (!isValid(entity)) {
         return {};
     }
@@ -151,43 +152,41 @@ Entity Scene::getParent(Entity entity) noexcept
     if (parent_handle == entt::null) {
         return {};
     }
-    return Entity{parent_handle, m_registry};
+    return Entity{ parent_handle, m_registry };
 }
 
-std::vector<Entity> Scene::getChildren(Entity entity)
-{
+std::vector<Entity> Scene::getChildren(Entity entity) {
     std::vector<Entity> children;
     if (!isValid(entity)) {
         return children;
     }
 
     const core::UUID id = entity.getUUID();
-    for (auto [handle, parent] : m_registry.view<ParentComponent>().each()) {
+    for (auto [handle, parent]: m_registry.view<ParentComponent>().each()) {
         if (parent.parent_id == id) {
-            children.push_back(Entity{handle, m_registry});
+            children.push_back(Entity{ handle, m_registry });
         }
     }
     return children;
 }
 
-const glm::mat4& Scene::getWorldTransform(Entity entity) const
-{
+const glm::mat4& Scene::getWorldTransform(Entity entity) const {
     if (!isValid(entity)) {
-        throw std::invalid_argument("The Entity does not belong to this Scene or is no longer valid.");
+        throw std::invalid_argument(
+                "The Entity does not belong to this Scene or is no longer valid.");
     }
     return std::as_const(m_registry).get<WorldTransformComponent>(entity.m_handle).world;
 }
 
-void Scene::updateWorldTransforms()
-{
-    for (auto [entity, transform, world, parent] :
-         m_registry.view<TransformComponent, WorldTransformComponent, ParentComponent>().each()) {
+void Scene::updateWorldTransforms() {
+    for (auto [entity, transform, world, parent]:
+            m_registry.view<TransformComponent, WorldTransformComponent, ParentComponent>()
+                    .each()) {
         updateWorldTransform(entity);
     }
 }
 
-entt::entity Scene::resolveEntity(const core::UUID& id) const noexcept
-{
+entt::entity Scene::resolveEntity(const core::UUID& id) const noexcept {
     const auto found = m_entity_lookup.find(id);
     if (found == m_entity_lookup.end() || !m_registry.valid(found->second)) {
         return entt::null;
@@ -195,8 +194,7 @@ entt::entity Scene::resolveEntity(const core::UUID& id) const noexcept
     return found->second;
 }
 
-void Scene::updateWorldTransform(entt::entity entity)
-{
+void Scene::updateWorldTransform(entt::entity entity) {
     auto& transform = m_registry.get<TransformComponent>(entity);
     auto& world = m_registry.get<WorldTransformComponent>(entity);
 
@@ -215,53 +213,49 @@ void Scene::updateWorldTransform(entt::entity entity)
     }
 
     updateWorldTransform(parent_handle);
-    world.world = m_registry.get<WorldTransformComponent>(parent_handle).world * transform.getTransform();
+    world.world =
+            m_registry.get<WorldTransformComponent>(parent_handle).world * transform.getTransform();
     world.dirty = false;
 }
 
-void Scene::collectSubtree(entt::entity root, std::vector<entt::entity>& subtree) const
-{
+void Scene::collectSubtree(entt::entity root, std::vector<entt::entity>& subtree) const {
     subtree.push_back(root);
     const core::UUID root_id = m_registry.get<IDComponent>(root).id;
-    for (auto [handle, parent] : m_registry.view<ParentComponent>().each()) {
+    for (auto [handle, parent]: m_registry.view<ParentComponent>().each()) {
         if (handle != root && parent.parent_id == root_id) {
             collectSubtree(handle, subtree);
         }
     }
 }
 
-Entity Scene::findEntity(core::UUID id) noexcept
-{
+Entity Scene::findEntity(core::UUID id) noexcept {
     const auto found = m_entity_lookup.find(id);
     if (found == m_entity_lookup.end() || !m_registry.valid(found->second)) {
         return {};
     }
-    return Entity{found->second, m_registry};
+    return Entity{ found->second, m_registry };
 }
 
-Entity Scene::findEntityByTag(std::string_view tag) noexcept
-{
-    for (auto [handle, tag_component] : m_registry.view<TagComponent>().each()) {
+Entity Scene::findEntityByTag(std::string_view tag) noexcept {
+    for (auto [handle, tag_component]: m_registry.view<TagComponent>().each()) {
         if (tag_component.tag == tag) {
-            return Entity{handle, m_registry};
+            return Entity{ handle, m_registry };
         }
     }
     return {};
 }
 
-bool Scene::containsEntity(core::UUID id) const noexcept
-{
+bool Scene::containsEntity(core::UUID id) const noexcept {
     const auto found = m_entity_lookup.find(id);
     return found != m_entity_lookup.end() && m_registry.valid(found->second);
 }
 
-bool Scene::isValid(Entity entity) const noexcept
-{
-    return entity.m_registry == &m_registry && entity.m_handle != entt::null && m_registry.valid(entity.m_handle);
+bool Scene::isValid(Entity entity) const noexcept {
+    return entity.m_registry == &m_registry && entity.m_handle != entt::null &&
+           m_registry.valid(entity.m_handle);
 }
 
-std::unordered_map<entt::id_type, Scene::ComponentCopyRegistration>& Scene::copyRegistry()
-{
+std::unordered_map<entt::id_type, Scene::ComponentCopyRegistration>& Scene::copyRegistry() {
     static std::unordered_map<entt::id_type, ComponentCopyRegistration> registry = [] {
         std::unordered_map<entt::id_type, ComponentCopyRegistration> initial;
         registerCopyInto<IDComponent>(initial);
@@ -274,23 +268,21 @@ std::unordered_map<entt::id_type, Scene::ComponentCopyRegistration>& Scene::copy
     return registry;
 }
 
-void Scene::clearEntities()
-{
+void Scene::clearEntities() {
     std::vector<entt::entity> entities;
     const auto& entity_storage = m_registry.storage<entt::entity>();
     entities.reserve(entity_storage.size());
-    for (auto [entity] : entity_storage.each()) {
+    for (auto [entity]: entity_storage.each()) {
         entities.push_back(entity);
     }
-    for (const entt::entity entity : entities) {
+    for (const entt::entity entity: entities) {
         const core::UUID id = m_registry.get<IDComponent>(entity).id;
         m_entity_lookup.erase(id);
         m_registry.destroy(entity);
     }
 }
 
-void Scene::copyEntitiesFrom(const Scene& source)
-{
+void Scene::copyEntitiesFrom(const Scene& source) {
     if (this == &source) {
         throw std::invalid_argument("A Scene cannot copy entities from itself.");
     }
@@ -300,44 +292,57 @@ void Scene::copyEntitiesFrom(const Scene& source)
     std::unordered_map<entt::entity, entt::entity> entity_map;
     const auto* entity_storage = source.m_registry.storage<entt::entity>();
     entity_map.reserve(entity_storage->size());
-    for (auto [source_entity] : entity_storage->each()) {
+    for (auto [source_entity]: entity_storage->each()) {
         const entt::entity destination_entity = m_registry.create();
         entity_map.emplace(source_entity, destination_entity);
     }
 
-    for (const auto& [id, registration] : copyRegistry()) {
+    for (const auto& [id, storage]: source.m_registry.storage()) {
+        if (id == entt::type_hash<entt::entity>::value() || copyRegistry().contains(id)) {
+            continue;
+        }
+        if (storage.size() > 0) {
+            getLogChannel().warn("Skipped copying a component type with storage id {} because it "
+                                 "is not registered for copy.",
+                    id);
+        }
+    }
+
+    for (const auto& [id, registration]: copyRegistry()) {
         const auto* storage = source.m_registry.storage(id);
         if (storage == nullptr) {
             continue;
         }
-        for (const auto& [source_entity, destination_entity] : entity_map) {
+        for (const auto& [source_entity, destination_entity]: entity_map) {
             if (storage->contains(source_entity)) {
-                registration.copy_fn(source.m_registry, m_registry, source_entity, destination_entity);
+                registration.copy_fn(source.m_registry, m_registry, source_entity,
+                        destination_entity);
             }
         }
     }
 
-    for (const auto& [source_entity, destination_entity] : entity_map) {
-        m_entity_lookup.emplace(m_registry.get<IDComponent>(destination_entity).id, destination_entity);
+    for (const auto& [source_entity, destination_entity]: entity_map) {
+        m_entity_lookup.emplace(m_registry.get<IDComponent>(destination_entity).id,
+                destination_entity);
     }
+    getLogChannel().debug("Copied {} entities from another scene", entity_map.size());
 }
 
-SceneSystem& Scene::registerSystem(
-    SystemStage stage,
-    std::type_index type,
-    std::unique_ptr<SceneSystem> system)
-{
+SceneSystem& Scene::registerSystem(SystemStage stage, std::type_index type,
+        std::unique_ptr<SceneSystem> system) {
     if (!isValidSystemStage(stage)) {
         throw std::invalid_argument("The requested SystemStage is not valid.");
     }
     if (m_system_storage->executing || m_system_storage->inLifecycleCallback) {
-        throw std::logic_error("Systems cannot be added during System execution or lifecycle callbacks.");
+        throw std::logic_error(
+                "Systems cannot be added during System execution or lifecycle callbacks.");
     }
     if (findSystem(type) != nullptr) {
+        getLogChannel().warn("Rejected duplicate System registration: {}", type.name());
         throw std::logic_error("A System of this type is already registered with the Scene.");
     }
 
-    m_system_storage->entries.push_back(SystemStorage::Entry{stage, type, std::move(system)});
+    m_system_storage->entries.push_back(SystemStorage::Entry{ stage, type, std::move(system) });
     SceneSystem& registered = *m_system_storage->entries.back().system;
 
     m_system_storage->inLifecycleCallback = true;
@@ -349,37 +354,34 @@ SceneSystem& Scene::registerSystem(
         throw;
     }
     m_system_storage->inLifecycleCallback = false;
+    getLogChannel().debug("Registered system '{}' at stage {}", type.name(),
+            static_cast<uint32_t>(stage));
     return registered;
 }
 
-SceneSystem* Scene::findSystem(std::type_index type) noexcept
-{
-    const auto found = std::find_if(
-        m_system_storage->entries.begin(),
-        m_system_storage->entries.end(),
-        [type](const SystemStorage::Entry& entry) { return entry.type == type; });
+SceneSystem* Scene::findSystem(std::type_index type) noexcept {
+    const auto found =
+            std::find_if(m_system_storage->entries.begin(), m_system_storage->entries.end(),
+                    [type](const SystemStorage::Entry& entry) { return entry.type == type; });
     return found == m_system_storage->entries.end() ? nullptr : found->system.get();
 }
 
-const SceneSystem* Scene::findSystem(std::type_index type) const noexcept
-{
-    const auto found = std::find_if(
-        m_system_storage->entries.cbegin(),
-        m_system_storage->entries.cend(),
-        [type](const SystemStorage::Entry& entry) { return entry.type == type; });
+const SceneSystem* Scene::findSystem(std::type_index type) const noexcept {
+    const auto found =
+            std::find_if(m_system_storage->entries.cbegin(), m_system_storage->entries.cend(),
+                    [type](const SystemStorage::Entry& entry) { return entry.type == type; });
     return found == m_system_storage->entries.cend() ? nullptr : found->system.get();
 }
 
-bool Scene::removeSystem(std::type_index type)
-{
+bool Scene::removeSystem(std::type_index type) {
     if (m_system_storage->executing || m_system_storage->inLifecycleCallback) {
-        throw std::logic_error("Systems cannot be removed during System execution or lifecycle callbacks.");
+        throw std::logic_error(
+                "Systems cannot be removed during System execution or lifecycle callbacks.");
     }
 
-    const auto found = std::find_if(
-        m_system_storage->entries.begin(),
-        m_system_storage->entries.end(),
-        [type](const SystemStorage::Entry& entry) { return entry.type == type; });
+    const auto found =
+            std::find_if(m_system_storage->entries.begin(), m_system_storage->entries.end(),
+                    [type](const SystemStorage::Entry& entry) { return entry.type == type; });
     if (found == m_system_storage->entries.end()) {
         return false;
     }
@@ -393,32 +395,29 @@ bool Scene::removeSystem(std::type_index type)
     }
     m_system_storage->inLifecycleCallback = false;
     m_system_storage->entries.erase(found);
+    getLogChannel().debug("Removed system '{}'", type.name());
     return true;
 }
 
-void Scene::setSystemEnabled(std::type_index type, bool enabled)
-{
-    const auto found = std::find_if(
-        m_system_storage->entries.begin(),
-        m_system_storage->entries.end(),
-        [type](const SystemStorage::Entry& entry) { return entry.type == type; });
+void Scene::setSystemEnabled(std::type_index type, bool enabled) {
+    const auto found =
+            std::find_if(m_system_storage->entries.begin(), m_system_storage->entries.end(),
+                    [type](const SystemStorage::Entry& entry) { return entry.type == type; });
     if (found == m_system_storage->entries.end()) {
         throw std::out_of_range("The requested System is not registered with this Scene.");
     }
     found->enabled = enabled;
+    getLogChannel().debug("{} system '{}'", enabled ? "Enabled" : "Disabled", type.name());
 }
 
-bool Scene::isSystemEnabled(std::type_index type) const noexcept
-{
-    const auto found = std::find_if(
-        m_system_storage->entries.cbegin(),
-        m_system_storage->entries.cend(),
-        [type](const SystemStorage::Entry& entry) { return entry.type == type; });
+bool Scene::isSystemEnabled(std::type_index type) const noexcept {
+    const auto found =
+            std::find_if(m_system_storage->entries.cbegin(), m_system_storage->entries.cend(),
+                    [type](const SystemStorage::Entry& entry) { return entry.type == type; });
     return found != m_system_storage->entries.cend() && found->enabled;
 }
 
-void Scene::runSystems(SystemStage stage, const UpdateContext& context)
-{
+void Scene::runSystems(SystemStage stage, const UpdateContext& context) {
     if (!isValidSystemStage(stage)) {
         throw std::invalid_argument("The requested SystemStage is not valid.");
     }
@@ -429,7 +428,7 @@ void Scene::runSystems(SystemStage stage, const UpdateContext& context)
     m_system_storage->executing = true;
     try {
         updateWorldTransforms();
-        for (const SystemStorage::Entry& entry : m_system_storage->entries) {
+        for (const SystemStorage::Entry& entry: m_system_storage->entries) {
             if (entry.stage == stage && entry.enabled) {
                 entry.system->onUpdate(*this, context);
             }

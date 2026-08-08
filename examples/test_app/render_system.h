@@ -1,7 +1,7 @@
 #pragma once
-#include "artichoco/renderer/render_frame_data.h"
 #include "artichoco/renderer/render_frame_queue.h"
 #include "artichoco/scene/system.h"
+#include "frame_data.h"
 
 #include <atomic>
 #include <cstddef>
@@ -9,7 +9,6 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
-#include <span>
 #include <vector>
 
 namespace arti::core {
@@ -60,7 +59,7 @@ private:
     std::filesystem::path m_mesh_shader_path;
     std::filesystem::path m_composite_shader_path;
 
-    renderer::RenderFrameQueue m_frame_queue;
+    renderer::RenderFrameQueue<RenderFrameData> m_frame_queue;
     std::atomic<bool> m_shutdown_requested{false};
     std::mutex m_pass_mutex;
     std::mutex m_error_mutex;

@@ -71,7 +71,7 @@ void RenderSystem::onUpdate(scene::Scene& scene, const scene::UpdateContext& con
     const auto& camera_transform = cameras.get<scene::TransformComponent>(camera_entity);
     const auto& camera = cameras.get<CameraComponent>(camera_entity);
 
-    renderer::RenderFrameData frame_data;
+    RenderFrameData frame_data;
     frame_data.time = m_elapsed_time;
     frame_data.frame_index = context.frameIndex;
 
@@ -84,7 +84,7 @@ void RenderSystem::onUpdate(scene::Scene& scene, const scene::UpdateContext& con
 
     for (auto [entity, transform, mesh, material] :
          scene.view<scene::TransformComponent, MeshComponent, MaterialComponent>().each()) {
-        renderer::RenderDrawCommand draw;
+        RenderDrawCommand draw;
         draw.vertex_buffer = mesh.mesh.vertexBufferPtr();
         draw.index_buffer = mesh.mesh.indexBufferPtr();
         draw.base_color_texture = material.material.texturePtr();
@@ -101,17 +101,16 @@ void RenderSystem::onUpdate(scene::Scene& scene, const scene::UpdateContext& con
 void RenderSystem::renderThreadLoop()
 {
     while (!m_shutdown_requested.load(std::memory_order_acquire)) {
-        const renderer::RenderFrameData* frame_data = m_frame_queue.waitForNext();
+        const RenderFrameData* frame_data = m_frame_queue.waitForNext();
         if (frame_data == nullptr) {
             break;
         }
         try {
             const std::vector<renderer::vulkan::VulkanPass*> passes = snapshotPasses();
-            for (renderer::vulkan::VulkanPass* pass : passes) {
-                pass->applyFrameData(*frame_data);
-            }
+            m_texture_compute_pass->applyFrameData(*frame_data);
+            m_mrt_mesh_pass->applyFrameData(*frame_data);
             m_render_device.renderFrame(
-                std::span<renderer::vulkan::VulkanPass* const>{passes.data(), passes.size()}, *frame_data);
+                std::span<renderer::vulkan::VulkanPass* const>{passes.data(), passes.size()});
         } catch (...) {
             std::lock_guard lock{m_error_mutex};
             m_last_render_error = std::current_exception();

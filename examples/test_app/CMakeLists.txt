@@ -90,6 +90,7 @@ target_include_directories(test_app SYSTEM PRIVATE
     "${PROJECT_SOURCE_DIR}/third_party/stb"
 )
 target_include_directories(test_app PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/passes"
 )
 
@@ -97,6 +98,7 @@ target_link_libraries(test_app
     PRIVATE
         ArtiChoco::Core
         ArtiChoco::Platform
+        ArtiChoco::Project
         ArtiChoco::Renderer
         ArtiChoco::Scene
         ArtiSDK::GLM
@@ -104,3 +106,7 @@ target_link_libraries(test_app
 
 artichoco_stage_vulkan_sdk_runtime(test_app)
 set_target_properties(test_app PROPERTIES FOLDER "Examples")
+
+add_executable(scene_serialization_smoke scene_serialization_smoke.cpp)
+target_link_libraries(scene_serialization_smoke PRIVATE ArtiChoco::Scene)
+set_target_properties(scene_serialization_smoke PROPERTIES FOLDER "Examples")

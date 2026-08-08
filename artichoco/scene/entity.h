@@ -13,13 +13,13 @@ class Scene;
 
 namespace detail {
 
-template <typename Component>
+template<typename Component>
 inline constexpr bool isRequiredComponent =
-    std::is_same_v<std::remove_cvref_t<Component>, IDComponent> ||
-    std::is_same_v<std::remove_cvref_t<Component>, TagComponent> ||
-    std::is_same_v<std::remove_cvref_t<Component>, TransformComponent> ||
-    std::is_same_v<std::remove_cvref_t<Component>, ParentComponent> ||
-    std::is_same_v<std::remove_cvref_t<Component>, WorldTransformComponent>;
+        std::is_same_v<std::remove_cvref_t<Component>, IDComponent> ||
+        std::is_same_v<std::remove_cvref_t<Component>, TagComponent> ||
+        std::is_same_v<std::remove_cvref_t<Component>, TransformComponent> ||
+        std::is_same_v<std::remove_cvref_t<Component>, ParentComponent> ||
+        std::is_same_v<std::remove_cvref_t<Component>, WorldTransformComponent>;
 
 } // namespace detail
 
@@ -29,15 +29,13 @@ public:
     Entity(const Entity&) = default;
     Entity& operator=(const Entity&) = default;
 
-    template <typename Component>
-    bool hasComponent() const noexcept
-    {
+    template<typename Component>
+    bool hasComponent() const noexcept {
         return isValid() && m_registry->all_of<Component>(m_handle);
     }
 
-    template <typename Component, typename... Args>
-    Component& addComponent(Args&&... args)
-    {
+    template<typename Component, typename... Args>
+    Component& addComponent(Args&&... args) {
         requireValid();
         if (m_registry->all_of<Component>(m_handle)) {
             throw std::logic_error("The Entity already has the requested Component.");
@@ -45,50 +43,38 @@ public:
         return m_registry->emplace<Component>(m_handle, std::forward<Args>(args)...);
     }
 
-    template <typename Component>
+    template<typename Component>
         requires(!std::is_same_v<std::remove_cvref_t<Component>, IDComponent>)
-    Component& getComponent()
-    {
+    Component& getComponent() {
         requireComponent<Component>();
         return m_registry->get<Component>(m_handle);
     }
 
-    template <typename Component>
-    const Component& getComponent() const
-    {
+    template<typename Component>
+    const Component& getComponent() const {
         requireComponent<Component>();
         return std::as_const(*m_registry).get<Component>(m_handle);
     }
 
-    template <typename Component>
-    bool removeComponent()
-    {
+    template<typename Component>
+    bool removeComponent() {
         static_assert(!detail::isRequiredComponent<Component>,
-                      "IDComponent, TagComponent, TransformComponent, ParentComponent, and WorldTransformComponent are "
-                      "required and cannot be removed.");
+                "IDComponent, TagComponent, TransformComponent, ParentComponent, and "
+                "WorldTransformComponent are "
+                "required and cannot be removed.");
         requireValid();
         return m_registry->remove<Component>(m_handle) != 0;
     }
 
-    entt::entity getHandle() const noexcept
-    {
-        return m_handle;
-    }
+    entt::entity getHandle() const noexcept { return m_handle; }
 
-    core::UUID getUUID() const
-    {
-        return getComponent<IDComponent>().id;
-    }
+    core::UUID getUUID() const { return getComponent<IDComponent>().id; }
 
-    bool isValid() const noexcept
-    {
+    bool isValid() const noexcept {
         return m_registry != nullptr && m_handle != entt::null && m_registry->valid(m_handle);
     }
 
-    explicit operator bool() const noexcept
-    {
-        return isValid();
-    }
+    explicit operator bool() const noexcept { return isValid(); }
 
     bool operator==(const Entity&) const noexcept = default;
 
@@ -96,28 +82,25 @@ private:
     friend class Scene;
 
     Entity(entt::entity handle, entt::registry& registry) noexcept
-        : m_handle(handle),
-          m_registry(&registry)
-    {}
+            : m_handle(handle),
+              m_registry(&registry) {}
 
-    void requireValid() const
-    {
+    void requireValid() const {
         if (!isValid()) {
             throw std::logic_error("The Entity is not valid.");
         }
     }
 
-    template <typename Component>
-    void requireComponent() const
-    {
+    template<typename Component>
+    void requireComponent() const {
         requireValid();
         if (!m_registry->all_of<Component>(m_handle)) {
             throw std::out_of_range("The Entity does not have the requested Component.");
         }
     }
 
-    entt::entity m_handle{entt::null};
-    entt::registry* m_registry{nullptr};
+    entt::entity m_handle{ entt::null };
+    entt::registry* m_registry{ nullptr };
 };
 
 } // namespace arti::scene

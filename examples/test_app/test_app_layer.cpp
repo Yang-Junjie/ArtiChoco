@@ -6,11 +6,15 @@
 #include "artichoco/renderer/vulkan/vulkan_device.h"
 #include "artichoco/renderer/vulkan/vulkan_surface.h"
 #include "artichoco/scene/scene.h"
+#include "artichoco/scene/scene_serialization_registry.h"
+#include "artichoco/scene/scene_serializer.h"
 #include "artichoco/core/task/task_system.h"
+#include "artichoco/project/project_manager.h"
 #include "camera_controller_system.h"
 #include "image_loader.h"
 #include "render_system.h"
 #include "rotation_system.h"
+#include "scene_component_serialization.h"
 #include "test_app_layer.h"
 #include "throw_once_pass.h"
 
@@ -27,6 +31,7 @@
 #include <glm/vec3.hpp>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -279,6 +284,54 @@ void TestAppLayer::onUpdate(core::Timestep delta_time)
         verifySnapshot();
         verifyTaskSystem();
         verifyMultiEntity();
+        verifyProject();
+    }
+}
+
+void TestAppLayer::verifySerialization()
+{
+    scene::SceneSerializationRegistry registry;
+    registry.registerComponent<RotationComponent>(
+        "test.rotation",
+        std::make_unique<RotationComponentSerialization>());
+    scene::SceneSerializer serializer{registry};
+
+    scene::Scene source;
+    auto parent = source.createEntity("serialized_parent");
+    auto& parent_transform = parent.getComponent<scene::TransformComponent>();
+    parent_transform.translation = glm::vec3{1.0f, 2.0f, 3.0f};
+    parent.addComponent<RotationComponent>(glm::vec3{0.0f, 1.0f, 0.0f}, 2.5f);
+
+    auto child = source.createEntity("serialized_child");
+    child.getComponent<scene::TransformComponent>().translation = glm::vec3{4.0f, 5.0f, 6.0f};
+    source.setParent(child, parent);
+
+    const std::string yaml = YAML::Dump(serializer.serialize(source));
+    scene::Scene restored;
+    serializer.deserialize(YAML::Load(yaml), restored);
+
+    const auto restored_parent = restored.findEntity(parent.getUUID());
+    const auto restored_child = restored.findEntity(child.getUUID());
+    if (!restored_parent || !restored_child ||
+        restored_parent.getComponent<scene::TagComponent>().tag != "serialized_parent" ||
+        restored.getParent(restored_child) != restored_parent) {
+        throw std::runtime_error("Scene serialization did not restore Entity metadata or hierarchy.");
+    }
+
+    const auto& restored_rotation = restored_parent.getComponent<RotationComponent>();
+    if (glm::length(restored_rotation.axis - glm::vec3{0.0f, 1.0f, 0.0f}) > 1e-5f ||
+        std::abs(restored_rotation.speed - 2.5f) > 1e-5f) {
+        throw std::runtime_error("Scene serialization did not restore a registered developer Component.");
+    }
+
+    const glm::mat4 expected_world =
+        restored_parent.getComponent<scene::TransformComponent>().getTransform() *
+        restored_child.getComponent<scene::TransformComponent>().getTransform();
+    const glm::mat4& restored_world = restored.getWorldTransform(restored_child);
+    for (size_t index = 0; index < 16; ++index) {
+        if (std::abs(glm::value_ptr(restored_world)[index] - glm::value_ptr(expected_world)[index]) > 1e-5f) {
+            throw std::runtime_error("Scene serialization did not rebuild world transforms.");
+        }
     }
 }
 
@@ -347,6 +400,42 @@ void TestAppLayer::verifyMultiEntity()
     if (!secondary_mesh.sharesBuffersWith(primary_mesh)) {
         throw std::runtime_error("The secondary cube does not share GPU resources with the primary cube.");
     }
+}
+
+void TestAppLayer::verifyProject()
+{
+    namespace fs = std::filesystem;
+
+    const fs::path temp_root = fs::temp_directory_path() / "arti_test_project";
+    fs::remove_all(temp_root);
+    std::error_code error;
+
+    auto& manager = project::ProjectManager::instance();
+    project::ProjectInfo info;
+    info.name = "verify_project";
+    info.version = "1.2.3";
+    info.author = "smoke";
+    info.assets_path = "assets";
+    if (!manager.createProject(temp_root, info) || !manager.saveProject()) {
+        throw std::runtime_error("ProjectManager create/save failed.");
+    }
+    if (!manager.loadProject(temp_root / "verify_project.artiproj")) {
+        throw std::runtime_error("ProjectManager load failed.");
+    }
+
+    const auto& loaded = manager.getProjectInfo();
+    if (!loaded) {
+        throw std::runtime_error("ProjectManager loaded no project info.");
+    }
+    if (loaded->name != "verify_project" || loaded->version != "1.2.3" || loaded->author != "smoke" ||
+        loaded->assets_path.generic_string() != "assets") {
+        throw std::runtime_error("ProjectManager roundtrip changed project fields.");
+    }
+    if (!manager.getProjectRootPath() || manager.getProjectRootPath().value() != fs::absolute(temp_root)) {
+        throw std::runtime_error("ProjectManager reported an incorrect project root.");
+    }
+
+    fs::remove_all(temp_root, error);
 }
 
 void TestAppLayer::verifyTaskSystem()

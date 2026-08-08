@@ -1,7 +1,7 @@
 #pragma once
-#include "artichoco/renderer/render_frame_data.h"
 #include "artichoco/renderer/vulkan/vulkan_pass.h"
 #include "artichoco/renderer/vulkan/vulkan_sampler.h"
+#include "frame_data.h"
 
 #include <filesystem>
 #include <memory>
@@ -20,10 +20,10 @@ public:
     TextureComputePass(std::shared_ptr<renderer::Texture2D> source, const std::filesystem::path& shader_path);
     ~TextureComputePass() override;
 
+    void applyFrameData(const RenderFrameData& frame_data);
     const renderer::vulkan::VulkanImage& output() const;
     void prepare(renderer::vulkan::VulkanPassPrepareContext& context) override;
     void record(renderer::vulkan::VulkanPassContext& context) override;
-    void applyFrameData(const renderer::RenderFrameData& frame_data) override;
 
 private:
     struct Impl;

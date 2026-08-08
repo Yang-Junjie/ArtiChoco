@@ -86,7 +86,7 @@ TextureComputePass::TextureComputePass(std::shared_ptr<renderer::Texture2D> sour
 
 TextureComputePass::~TextureComputePass() = default;
 
-void TextureComputePass::applyFrameData(const renderer::RenderFrameData& frame_data)
+void TextureComputePass::applyFrameData(const RenderFrameData& frame_data)
 {
     m_impl->source = frame_data.draws.empty() ? nullptr : frame_data.draws.front().base_color_texture;
     m_impl->time = frame_data.time;

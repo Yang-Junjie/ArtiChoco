@@ -15,8 +15,7 @@ struct IDComponent {
     IDComponent() = default;
 
     explicit IDComponent(core::UUID id)
-        : id(id)
-    {}
+            : id(id) {}
 };
 
 struct TagComponent {
@@ -25,18 +24,16 @@ struct TagComponent {
     TagComponent() = default;
 
     explicit TagComponent(std::string tag)
-        : tag(std::move(tag))
-    {}
+            : tag(std::move(tag)) {}
 };
 
 struct TransformComponent {
-    glm::vec3 translation{0.0f};
-    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
-    glm::vec3 scale{1.0f};
+    glm::vec3 translation{ 0.0f };
+    glm::quat rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+    glm::vec3 scale{ 1.0f };
 
-    glm::mat4 getTransform() const
-    {
-        glm::mat4 transform{1.0f};
+    glm::mat4 getTransform() const {
+        glm::mat4 transform{ 1.0f };
         transform = glm::translate(transform, translation);
         transform *= glm::mat4_cast(rotation);
         transform = glm::scale(transform, scale);
@@ -50,12 +47,11 @@ struct ParentComponent {
     ParentComponent() = default;
 
     explicit ParentComponent(core::UUID parent_id)
-        : parent_id(parent_id)
-    {}
+            : parent_id(parent_id) {}
 };
 
 struct WorldTransformComponent {
-    glm::mat4 world{1.0f};
-    bool dirty{true};
+    glm::mat4 world{ 1.0f };
+    bool dirty{ true };
 };
 } // namespace arti::scene

@@ -174,6 +174,7 @@ struct MrtMeshPass::Impl {
     std::unique_ptr<renderer::vulkan::VulkanDepthBuffer> depth_buffer;
     std::unique_ptr<renderer::vulkan::VulkanBuffer> material_buffer;
     std::vector<renderer::vulkan::VulkanBindingSet> binding_sets;
+    const RenderFrameData* frame_data{nullptr};
     std::array<float, 4> clear_color{0.04f, 0.08f, 0.12f, 1.0f};
     bool outputs_initialized{false};
     bool depth_initialized{false};
@@ -184,6 +185,11 @@ MrtMeshPass::MrtMeshPass(TextureComputePass& texture_source, const std::filesyst
 {}
 
 MrtMeshPass::~MrtMeshPass() = default;
+
+void MrtMeshPass::applyFrameData(const RenderFrameData& frame_data)
+{
+    m_impl->frame_data = &frame_data;
+}
 
 void MrtMeshPass::setClearColor(const std::array<float, 4>& color) noexcept
 {
@@ -215,7 +221,10 @@ void MrtMeshPass::prepare(renderer::vulkan::VulkanPassPrepareContext& context)
 void MrtMeshPass::record(renderer::vulkan::VulkanPassContext& context)
 {
     auto& frame = context.frame();
-    const auto& frame_data = context.frameData();
+    if (m_impl->frame_data == nullptr) {
+        throw std::logic_error("MrtMeshPass reqnuiuires frame data before recording.");
+    }
+    const auto& frame_data = *m_impl->frame_data;
     if (frame_data.draws.empty()) {
         return;
     }

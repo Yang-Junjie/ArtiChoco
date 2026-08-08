@@ -58,12 +58,10 @@ VulkanPipelineCache& VulkanPassPrepareContext::pipelineCache() const noexcept
 
 VulkanPassContext::VulkanPassContext(VulkanFrameContext& frame,
                                      const detail::DeferredResourceOwner* resource_owner,
-                                     VulkanPipelineCache& pipeline_cache,
-                                     const RenderFrameData& frame_data) noexcept
+                                     VulkanPipelineCache& pipeline_cache) noexcept
     : m_frame(frame),
       m_resource_owner(resource_owner),
-      m_pipeline_cache(pipeline_cache),
-      m_frame_data(frame_data)
+      m_pipeline_cache(pipeline_cache)
 {}
 
 VulkanFrameContext& VulkanPassContext::frame() const noexcept
@@ -79,11 +77,6 @@ VulkanCommandRecorder& VulkanPassContext::commands() const noexcept
 VulkanPipelineCache& VulkanPassContext::pipelineCache() const noexcept
 {
     return m_pipeline_cache;
-}
-
-const RenderFrameData& VulkanPassContext::frameData() const noexcept
-{
-    return m_frame_data;
 }
 
 vk::Buffer VulkanPassContext::buffer(const VertexBuffer& vertex_buffer) const
