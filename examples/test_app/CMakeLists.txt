@@ -110,3 +110,7 @@ set_target_properties(test_app PROPERTIES FOLDER "Examples")
 add_executable(scene_serialization_smoke scene_serialization_smoke.cpp)
 target_link_libraries(scene_serialization_smoke PRIVATE ArtiChoco::Scene)
 set_target_properties(scene_serialization_smoke PROPERTIES FOLDER "Examples")
+
+add_executable(project_smoke project_smoke.cpp)
+target_link_libraries(project_smoke PRIVATE ArtiChoco::Project)
+set_target_properties(project_smoke PROPERTIES FOLDER "Examples")

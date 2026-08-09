@@ -67,7 +67,6 @@ public:
     }
 
     entt::entity getHandle() const noexcept { return m_handle; }
-
     core::UUID getUUID() const { return getComponent<IDComponent>().id; }
 
     bool isValid() const noexcept {

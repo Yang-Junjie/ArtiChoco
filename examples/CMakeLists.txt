@@ -1,2 +1,3 @@
 add_subdirectory(test_app)
 add_subdirectory(renderer_showcase)
+add_subdirectory(asset_test)
