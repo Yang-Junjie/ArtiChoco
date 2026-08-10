@@ -65,7 +65,7 @@ struct RenderDevice::Impl final : detail::DeferredResourceOwner,
             IndexType index_type);
 
     Texture2D createTexture2D(std::span<const std::byte> texels, uint32_t width, uint32_t height,
-            TextureFormat format);
+            TextureFormat format, bool generate_mipmaps);
     TextureCube createTextureCube(std::span<const TextureCubeMipData> mip_levels,
             TextureFormat format);
 
@@ -136,9 +136,9 @@ IndexBuffer RenderDevice::Impl::createIndexBuffer(std::span<const std::byte> dat
 }
 
 Texture2D RenderDevice::Impl::createTexture2D(std::span<const std::byte> texels, uint32_t width,
-        uint32_t height, TextureFormat format) {
+        uint32_t height, TextureFormat format, bool generate_mipmaps) {
     return detail::TextureAccess::create(m_allocator, m_upload_context, m_device,
-            shared_from_this(), texels, width, height, format);
+            shared_from_this(), texels, width, height, format, generate_mipmaps);
 }
 
 TextureCube RenderDevice::Impl::createTextureCube(std::span<const TextureCubeMipData> mip_levels,
@@ -211,8 +211,8 @@ IndexBuffer RenderDevice::createIndexBuffer(std::span<const std::byte> data, uin
 }
 
 Texture2D RenderDevice::createTexture2D(std::span<const std::byte> texels, uint32_t width,
-        uint32_t height, TextureFormat format) {
-    return m_impl->createTexture2D(texels, width, height, format);
+        uint32_t height, TextureFormat format, bool generate_mipmaps) {
+    return m_impl->createTexture2D(texels, width, height, format, generate_mipmaps);
 }
 
 TextureCube RenderDevice::createTextureCube(const TextureCubeFaces& faces, uint32_t size,

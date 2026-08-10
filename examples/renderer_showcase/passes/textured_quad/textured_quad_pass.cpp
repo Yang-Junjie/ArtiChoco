@@ -45,7 +45,9 @@ void TexturedQuadPass::prepareResources(renderer::vulkan::VulkanPassPrepareConte
         return;
     }
 
-    m_impl->sampler = std::make_unique<renderer::vulkan::VulkanSampler>(context.device());
+    renderer::vulkan::VulkanSamplerCreateInfo sampler_info;
+    sampler_info.max_lod = static_cast<float>(m_impl->texture.mipLevels() - 1);
+    m_impl->sampler = std::make_unique<renderer::vulkan::VulkanSampler>(context.device(), sampler_info);
     m_impl->binding_sets.reserve(context.frameSlotCount());
     for (size_t index = 0; index < context.frameSlotCount(); ++index) {
         m_impl->binding_sets.emplace_back(context.device(), context.descriptorAllocator(), bindingLayout());

@@ -1,8 +1,10 @@
 #include "vulkan_command_recorder.h"
+#include "vulkan_image.h"
 #include "vulkan_upload_context.h"
 
 #include <cstring>
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <stdexcept>
@@ -112,6 +114,90 @@ void VulkanUploadContext::uploadImage(std::span<const std::byte> data,
         staging.handle(), destination, vk::ImageLayout::eTransferDstOptimal, regions);
 
     commands.imageBarrier(makeImageBarrier(destination, destination_range, transfer_write, final_state));
+    commands.end();
+
+    submitAndWait();
+}
+
+void VulkanUploadContext::uploadImageWithMipmaps(std::span<const std::byte> data,
+                                                 vk::Image destination,
+                                                 vk::Extent2D extent,
+                                                 vk::Format format,
+                                                 uint32_t bytes_per_texel,
+                                                 VulkanImageState final_state)
+{
+    if (data.empty() || !destination || extent.width == 0 || extent.height == 0 ||
+        bytes_per_texel == 0 ||
+        data.size() != static_cast<size_t>(extent.width) * extent.height * bytes_per_texel) {
+        throw std::invalid_argument(
+            "A mipmapped image upload requires matching data, dimensions, and texel size.");
+    }
+    const auto format_properties = m_device.physicalDevice().getFormatProperties(format);
+    const bool filterable = static_cast<bool>(
+        format_properties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear);
+    if (!filterable) {
+        throw std::invalid_argument(
+            "Mipmap generation requires a texture format that supports optimal-tiling filtering.");
+    }
+
+    uint32_t mip_levels = imageMipLevelCount(extent);
+
+    auto staging = createStagingBuffer(data);
+    beginUpload();
+    VulkanCommandRecorder commands{m_device, m_command_buffer};
+
+    vk::ImageSubresourceRange all_range{};
+    all_range.setAspectMask(vk::ImageAspectFlagBits::eColor)
+        .setBaseMipLevel(0)
+        .setLevelCount(mip_levels)
+        .setBaseArrayLayer(0)
+        .setLayerCount(1);
+    const VulkanImageState undefined{
+        vk::PipelineStageFlagBits2::eNone,
+        vk::AccessFlagBits2::eNone,
+        vk::ImageLayout::eUndefined,
+    };
+    const VulkanImageState transfer_write{
+        vk::PipelineStageFlagBits2::eCopy,
+        vk::AccessFlagBits2::eTransferWrite,
+        vk::ImageLayout::eTransferDstOptimal,
+    };
+    const VulkanImageState transfer_read{
+        vk::PipelineStageFlagBits2::eCopy,
+        vk::AccessFlagBits2::eTransferRead,
+        vk::ImageLayout::eTransferSrcOptimal,
+    };
+    commands.imageBarrier(makeImageBarrier(destination, all_range, undefined, transfer_write));
+
+    vk::ImageSubresourceLayers base_layers{};
+    base_layers.setAspectMask(vk::ImageAspectFlagBits::eColor)
+        .setMipLevel(0)
+        .setBaseArrayLayer(0)
+        .setLayerCount(1);
+    vk::BufferImageCopy copy{};
+    copy.setBufferOffset(0)
+        .setBufferRowLength(0)
+        .setBufferImageHeight(0)
+        .setImageSubresource(base_layers)
+        .setImageOffset({0, 0, 0})
+        .setImageExtent({extent.width, extent.height, 1});
+    commands.handle().copyBufferToImage(
+        staging.handle(), destination, vk::ImageLayout::eTransferDstOptimal, copy);
+
+    if (mip_levels > 1) {
+        vk::ImageSubresourceRange base_range{};
+        base_range.setAspectMask(vk::ImageAspectFlagBits::eColor)
+            .setBaseMipLevel(0)
+            .setLevelCount(1)
+            .setBaseArrayLayer(0)
+            .setLayerCount(1);
+        commands.imageBarrier(
+            makeImageBarrier(destination, base_range, transfer_write, transfer_read));
+        commands.generateMipmaps(destination, extent);
+    }
+
+    const VulkanImageState pre_final = mip_levels > 1 ? transfer_read : transfer_write;
+    commands.imageBarrier(makeImageBarrier(destination, all_range, pre_final, final_state));
     commands.end();
 
     submitAndWait();

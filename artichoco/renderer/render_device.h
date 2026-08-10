@@ -45,7 +45,7 @@ public:
             IndexType index_type = IndexType::UInt32);
 
     Texture2D createTexture2D(std::span<const std::byte> texels, uint32_t width, uint32_t height,
-            TextureFormat format = TextureFormat::RGBA8Srgb);
+            TextureFormat format = TextureFormat::RGBA8Srgb, bool generate_mipmaps = true);
 
     TextureCube createTextureCube(const TextureCubeFaces& faces, uint32_t size,
             TextureFormat format = TextureFormat::RGBA8Srgb);

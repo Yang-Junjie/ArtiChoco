@@ -26,6 +26,9 @@ public:
                          vk::DependencyFlags dependency_flags = {}) const;
     void bufferBarrier(const vk::BufferMemoryBarrier2& barrier) const;
     void imageBarrier(const vk::ImageMemoryBarrier2& barrier) const;
+    void generateMipmaps(vk::Image image,
+                         vk::Extent2D extent,
+                         vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor) const;
 
     void beginRendering(const vk::RenderingInfo& rendering_info) const;
     void endRendering() const;

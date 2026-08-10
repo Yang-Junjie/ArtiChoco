@@ -1,8 +1,11 @@
 #include "vulkan_binding_set.h"
 #include "vulkan_command_recorder.h"
 #include "vulkan_compute_pipeline.h"
+#include "vulkan_image.h"
 #include "vulkan_pipeline.h"
+#include "vulkan_resource_state.h"
 
+#include <algorithm>
 #include <array>
 
 namespace arti::renderer::vulkan {
@@ -53,6 +56,64 @@ void VulkanCommandRecorder::bufferBarrier(const vk::BufferMemoryBarrier2& barrie
 void VulkanCommandRecorder::imageBarrier(const vk::ImageMemoryBarrier2& barrier) const
 {
     pipelineBarrier({}, {}, std::span{&barrier, 1});
+}
+
+void VulkanCommandRecorder::generateMipmaps(vk::Image image,
+                                            vk::Extent2D extent,
+                                            vk::ImageAspectFlags aspect) const
+{
+    const uint32_t mip_levels = imageMipLevelCount(extent);
+    const VulkanImageState transfer_write{
+        vk::PipelineStageFlagBits2::eCopy,
+        vk::AccessFlagBits2::eTransferWrite,
+        vk::ImageLayout::eTransferDstOptimal,
+    };
+    const VulkanImageState transfer_read{
+        vk::PipelineStageFlagBits2::eCopy,
+        vk::AccessFlagBits2::eTransferRead,
+        vk::ImageLayout::eTransferSrcOptimal,
+    };
+
+    uint32_t source_width = extent.width;
+    uint32_t source_height = extent.height;
+    for (uint32_t level = 1; level < mip_levels; ++level) {
+        const uint32_t target_width = std::max(1u, source_width / 2);
+        const uint32_t target_height = std::max(1u, source_height / 2);
+
+        vk::ImageSubresourceLayers source_layers{};
+        source_layers.setAspectMask(aspect)
+            .setMipLevel(level - 1)
+            .setBaseArrayLayer(0)
+            .setLayerCount(1);
+        vk::ImageSubresourceLayers target_layers{};
+        target_layers.setAspectMask(aspect)
+            .setMipLevel(level)
+            .setBaseArrayLayer(0)
+            .setLayerCount(1);
+        vk::ImageBlit blit{};
+        blit.setSrcSubresource(source_layers)
+            .setSrcOffsets(
+                {vk::Offset3D{0, 0, 0}, vk::Offset3D{static_cast<int32_t>(source_width),
+                    static_cast<int32_t>(source_height), 1}})
+            .setDstSubresource(target_layers)
+            .setDstOffsets(
+                {vk::Offset3D{0, 0, 0}, vk::Offset3D{static_cast<int32_t>(target_width),
+                    static_cast<int32_t>(target_height), 1}});
+        m_command_buffer.blitImage(
+            image, vk::ImageLayout::eTransferSrcOptimal, image, vk::ImageLayout::eTransferDstOptimal,
+            blit, vk::Filter::eLinear);
+
+        vk::ImageSubresourceRange target_range{};
+        target_range.setAspectMask(aspect)
+            .setBaseMipLevel(level)
+            .setLevelCount(1)
+            .setBaseArrayLayer(0)
+            .setLayerCount(1);
+        imageBarrier(makeImageBarrier(image, target_range, transfer_write, transfer_read));
+
+        source_width = target_width;
+        source_height = target_height;
+    }
 }
 
 void VulkanCommandRecorder::beginRendering(const vk::RenderingInfo& rendering_info) const

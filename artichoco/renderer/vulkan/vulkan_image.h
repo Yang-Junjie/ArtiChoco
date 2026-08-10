@@ -2,9 +2,23 @@
 #include "vulkan_allocator.h"
 #include "vulkan_device.h"
 
+#include <algorithm>
+#include <cstdint>
+
 #include <vulkan/vulkan_raii.hpp>
 
 namespace arti::renderer::vulkan {
+
+inline uint32_t imageMipLevelCount(vk::Extent2D extent) noexcept
+{
+    uint32_t mip_levels = 1;
+    for (uint32_t width = extent.width, height = extent.height; width > 1 || height > 1;) {
+        width = std::max(1u, width / 2);
+        height = std::max(1u, height / 2);
+        ++mip_levels;
+    }
+    return mip_levels;
+}
 
 struct VulkanImageCreateInfo {
     vk::Extent2D extent{};

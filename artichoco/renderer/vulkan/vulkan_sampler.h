@@ -14,7 +14,7 @@ struct VulkanSamplerCreateInfo {
     vk::SamplerAddressMode address_mode_w{vk::SamplerAddressMode::eRepeat};
     float mip_lod_bias{0.0f};
     bool anisotropy_enable{true};
-    float max_anisotropy{1.0f};
+    float max_anisotropy{8.0f};
     bool compare_enable{false};
     vk::CompareOp compare_op{vk::CompareOp::eNever};
     float min_lod{0.0f};
