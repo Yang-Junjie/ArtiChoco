@@ -19,7 +19,7 @@ struct TestComponent {
     std::string label;
 };
 
-class TestComponentSerialization final : public arti::scene::Serialization<TestComponent> {
+class TestComponentSerialization final : public arti::scene::ComponentSerialization<TestComponent> {
 public:
     YAML::Node serialize(const TestComponent& component) const override
     {

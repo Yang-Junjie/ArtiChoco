@@ -1,13 +1,13 @@
 #pragma once
 
-#include "artichoco/scene/serialization.h"
+#include "artichoco/scene/component/component_serialization.h"
 #include "scene_components.h"
 
 #include <stdexcept>
 
 namespace arti::test_app {
 
-class RotationComponentSerialization final : public scene::Serialization<RotationComponent> {
+class RotationComponentSerialization final : public scene::ComponentSerialization<RotationComponent> {
 public:
     YAML::Node serialize(const RotationComponent& component) const override
     {

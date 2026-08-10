@@ -1,3 +1,6 @@
+#include "component/id_serialization.h"
+#include "component/parent_serialization.h"
+#include "component/tag_serialization.h"
 #include "scene.h"
 #include "scene_log.h"
 #include "scene_serializer.h"
@@ -13,30 +16,6 @@
 #include <vector>
 
 namespace arti::scene {
-namespace {
-
-core::UUID readUUID(const YAML::Node& node, const char* field)
-{
-    if (!node || !node.IsScalar()) {
-        throw std::invalid_argument(std::string("Scene field '") + field + "' must be a UUID string.");
-    }
-
-    const auto parsed = core::UUID::fromString(node.as<std::string>());
-    if (!parsed || !parsed->isValid()) {
-        throw std::invalid_argument(std::string("Scene field '") + field + "' contains an invalid UUID.");
-    }
-    return *parsed;
-}
-
-std::string readTag(const YAML::Node& node)
-{
-    if (!node || !node.IsScalar()) {
-        throw std::invalid_argument("Scene field 'Tag' must be a string.");
-    }
-    return node.as<std::string>();
-}
-
-} // namespace
 
 SceneSerializer::SceneSerializer(const SceneSerializationRegistry& registry) noexcept
     : m_registry(registry)
@@ -67,19 +46,7 @@ YAML::Node SceneSerializer::serialize(const Scene& scene) const
     });
 
     for (const entt::entity entity : entity_handles) {
-        const auto& id = scene.m_registry.get<IDComponent>(entity);
-        const auto& tag = scene.m_registry.get<TagComponent>(entity);
-        const auto& parent = scene.m_registry.get<ParentComponent>(entity);
-
         YAML::Node entity_node;
-        entity_node["ID"] = id.id.toString();
-        entity_node["Tag"] = tag.tag;
-        if (parent.parent_id.isValid()) {
-            entity_node["Parent"] = parent.parent_id.toString();
-        } else {
-            entity_node["Parent"] = YAML::Null;
-        }
-
         YAML::Node components(YAML::NodeType::Map);
         for (const SceneSerializationRegistry::Entry* entry : serialization_entries) {
             if (entry->contains(scene.m_registry, entity)) {
@@ -117,6 +84,13 @@ void SceneSerializer::deserialize(const YAML::Node& node, Scene& scene) const
         std::vector<PendingComponent> components;
     };
 
+    const auto* id_serialization = m_registry.getSerialization<IDComponent>();
+    const auto* tag_serialization = m_registry.getSerialization<TagComponent>();
+    const auto* parent_serialization = m_registry.getSerialization<ParentComponent>();
+    if (id_serialization == nullptr || tag_serialization == nullptr || parent_serialization == nullptr) {
+        throw std::logic_error("Scene serialization registry is missing a built-in component serialization.");
+    }
+
     std::vector<PendingEntity> pending_entities;
     pending_entities.reserve(entities_node.size());
     std::unordered_map<core::UUID, size_t> entity_indices;
@@ -126,13 +100,27 @@ void SceneSerializer::deserialize(const YAML::Node& node, Scene& scene) const
             throw std::invalid_argument("Each serialized Entity must be a YAML map.");
         }
 
-        PendingEntity pending;
-        pending.id = readUUID(entity_node["ID"], "ID");
-        pending.tag = readTag(entity_node["Tag"]);
+        const YAML::Node components_node = entity_node["Components"];
+        if (!components_node || !components_node.IsMap()) {
+            throw std::invalid_argument("Each serialized Entity must contain a 'Components' map.");
+        }
 
-        const YAML::Node parent_node = entity_node["Parent"];
-        if (parent_node && !parent_node.IsNull()) {
-            pending.parent_id = readUUID(parent_node, "Parent");
+        PendingEntity pending;
+        const YAML::Node id_node = components_node[std::string(IDSerialization::typeName())];
+        if (!id_node) {
+            throw std::invalid_argument("Each serialized Entity must contain an 'arti.id' component.");
+        }
+        pending.id = id_serialization->deserialize(id_node).id;
+
+        const YAML::Node tag_node = components_node[std::string(TagSerialization::typeName())];
+        if (!tag_node) {
+            throw std::invalid_argument("Each serialized Entity must contain an 'arti.tag' component.");
+        }
+        pending.tag = tag_serialization->deserialize(tag_node).tag;
+
+        const YAML::Node parent_node = components_node[std::string(ParentSerialization::typeName())];
+        if (parent_node) {
+            pending.parent_id = parent_serialization->deserialize(parent_node).parent_id;
         }
 
         const auto [_, inserted] = entity_indices.emplace(pending.id, pending_entities.size());
@@ -140,28 +128,21 @@ void SceneSerializer::deserialize(const YAML::Node& node, Scene& scene) const
             throw std::invalid_argument("Scene YAML contains a duplicate Entity UUID.");
         }
 
-        const YAML::Node components_node = entity_node["Components"];
-        if (components_node) {
-            if (!components_node.IsMap()) {
-                throw std::invalid_argument("Scene field 'Components' must be a map.");
+        std::unordered_set<std::string> component_types;
+        for (const auto& component_node : components_node) {
+            if (!component_node.first.IsScalar()) {
+                throw std::invalid_argument("A serialized component type name must be a string.");
+            }
+            std::string type_name = component_node.first.as<std::string>();
+            if (!component_types.insert(type_name).second) {
+                throw std::invalid_argument("An Entity contains a duplicate serialized component type.");
             }
 
-            std::unordered_set<std::string> component_types;
-            for (const auto& component_node : components_node) {
-                if (!component_node.first.IsScalar()) {
-                    throw std::invalid_argument("A serialized component type name must be a string.");
-                }
-                std::string type_name = component_node.first.as<std::string>();
-                if (!component_types.insert(type_name).second) {
-                    throw std::invalid_argument("An Entity contains a duplicate serialized component type.");
-                }
-
-                const auto* serialization = m_registry.findEntry(type_name);
-                if (serialization == nullptr) {
-                    throw std::invalid_argument("Scene YAML contains an unregistered component type: " + type_name);
-                }
-                pending.components.push_back(PendingComponent{serialization, component_node.second});
+            const auto* serialization = m_registry.findEntry(type_name);
+            if (serialization == nullptr) {
+                throw std::invalid_argument("Scene YAML contains an unregistered component type: " + type_name);
             }
+            pending.components.push_back(PendingComponent{serialization, component_node.second});
         }
 
         pending_entities.push_back(std::move(pending));

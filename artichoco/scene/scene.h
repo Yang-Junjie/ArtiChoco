@@ -54,15 +54,15 @@ public:
     const glm::mat4& getWorldTransform(Entity entity) const;
     void updateWorldTransforms();
 
+    void clearEntities();
+    void copyEntitiesFrom(const Scene& source);
+
     template<typename Component>
     static void registerComponentCopy() {
         static_assert(std::is_copy_constructible_v<Component>,
                 "Scene components must be copy-constructible to support scene copying.");
         registerCopyInto<Component>(copyRegistry());
     }
-
-    void clearEntities();
-    void copyEntitiesFrom(const Scene& source);
 
     template<typename Type, typename... Other, typename... Exclude>
     [[nodiscard]] auto view(entt::exclude_t<Exclude...> exclude = entt::exclude_t<Exclude...>{}) {

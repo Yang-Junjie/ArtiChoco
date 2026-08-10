@@ -1,7 +1,7 @@
 #pragma once
 
 #include "components.h"
-#include "serialization.h"
+#include "component/component_serialization.h"
 
 #include <cstdint>
 
@@ -27,12 +27,10 @@ public:
     SceneSerializationRegistry& operator=(const SceneSerializationRegistry&) = delete;
 
     template <typename Component>
-    void registerComponent(std::string type_name, std::unique_ptr<Serialization<Component>> serialization)
+    void registerComponent(std::string type_name, std::unique_ptr<ComponentSerialization<Component>> serialization)
     {
-        static_assert(!std::is_same_v<Component, IDComponent> && !std::is_same_v<Component, TagComponent> &&
-                          !std::is_same_v<Component, ParentComponent> &&
-                          !std::is_same_v<Component, WorldTransformComponent>,
-                      "Scene-owned components are serialized by SceneSerializer.");
+        static_assert(!std::is_same_v<Component, WorldTransformComponent>,
+                      "WorldTransformComponent is derived state rebuilt by SceneSerializer.");
 
         if (type_name.empty()) {
             throw std::invalid_argument("A component serialization type name cannot be empty.");
@@ -42,6 +40,16 @@ public:
         }
 
         registerEntry(std::make_unique<ComponentEntry<Component>>(std::move(type_name), std::move(serialization)));
+    }
+
+    template <typename Component>
+    const ComponentSerialization<Component>* getSerialization() const noexcept
+    {
+        const auto found = m_by_component_type.find(entt::type_hash<Component>::value());
+        if (found == m_by_component_type.end()) {
+            return nullptr;
+        }
+        return static_cast<const ComponentEntry<Component>*>(found->second)->componentSerialization();
     }
 
 private:
@@ -58,7 +66,7 @@ private:
 
     template <typename Component> class ComponentEntry final : public Entry {
     public:
-        ComponentEntry(std::string type_name, std::unique_ptr<Serialization<Component>> serialization)
+        ComponentEntry(std::string type_name, std::unique_ptr<ComponentSerialization<Component>> serialization)
             : m_type_name(std::move(type_name)),
               m_serialization(std::move(serialization))
         {}
@@ -88,9 +96,14 @@ private:
             registry.emplace_or_replace<Component>(entity, m_serialization->deserialize(node));
         }
 
+        const ComponentSerialization<Component>* componentSerialization() const noexcept
+        {
+            return m_serialization.get();
+        }
+
     private:
         std::string m_type_name;
-        std::unique_ptr<Serialization<Component>> m_serialization;
+        std::unique_ptr<ComponentSerialization<Component>> m_serialization;
     };
 
     void registerEntry(std::unique_ptr<Entry> entry);

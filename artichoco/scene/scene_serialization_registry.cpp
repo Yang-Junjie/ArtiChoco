@@ -1,79 +1,25 @@
 #include "scene_serialization_registry.h"
+#include "component/id_serialization.h"
+#include "component/parent_serialization.h"
+#include "component/tag_serialization.h"
+#include "component/transform_serialization.h"
 #include "scene_log.h"
 
+#include <memory>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace arti::scene {
-namespace {
-
-YAML::Node writeVector3(const glm::vec3& value)
-{
-    YAML::Node node(YAML::NodeType::Sequence);
-    node.push_back(value.x);
-    node.push_back(value.y);
-    node.push_back(value.z);
-    return node;
-}
-
-glm::vec3 readVector3(const YAML::Node& node, const char* field)
-{
-    const YAML::Node value = node[field];
-    if (!value || !value.IsSequence() || value.size() != 3) {
-        throw std::invalid_argument(std::string("Transform field '") + field + "' must contain three values.");
-    }
-    return glm::vec3{value[0].as<float>(), value[1].as<float>(), value[2].as<float>()};
-}
-
-YAML::Node writeQuaternion(const glm::quat& value)
-{
-    YAML::Node node(YAML::NodeType::Sequence);
-    node.push_back(value.w);
-    node.push_back(value.x);
-    node.push_back(value.y);
-    node.push_back(value.z);
-    return node;
-}
-
-glm::quat readQuaternion(const YAML::Node& node)
-{
-    const YAML::Node value = node["Rotation"];
-    if (!value || !value.IsSequence() || value.size() != 4) {
-        throw std::invalid_argument("Transform field 'Rotation' must contain four values.");
-    }
-    return glm::quat{value[0].as<float>(), value[1].as<float>(), value[2].as<float>(), value[3].as<float>()};
-}
-
-class TransformSerialization final : public Serialization<TransformComponent> {
-public:
-    YAML::Node serialize(const TransformComponent& component) const override
-    {
-        YAML::Node node;
-        node["Translation"] = writeVector3(component.translation);
-        node["Rotation"] = writeQuaternion(component.rotation);
-        node["Scale"] = writeVector3(component.scale);
-        return node;
-    }
-
-    TransformComponent deserialize(const YAML::Node& node) const override
-    {
-        if (!node || !node.IsMap()) {
-            throw std::invalid_argument("Transform component data must be a YAML map.");
-        }
-
-        TransformComponent component;
-        component.translation = readVector3(node, "Translation");
-        component.rotation = readQuaternion(node);
-        component.scale = readVector3(node, "Scale");
-        return component;
-    }
-};
-
-} // namespace
 
 SceneSerializationRegistry::SceneSerializationRegistry()
 {
-    registerComponent<TransformComponent>("arti.transform", std::make_unique<TransformSerialization>());
+    registerComponent<IDComponent>(std::string{IDSerialization::typeName()}, std::make_unique<IDSerialization>());
+    registerComponent<TagComponent>(std::string{TagSerialization::typeName()}, std::make_unique<TagSerialization>());
+    registerComponent<ParentComponent>(
+            std::string{ParentSerialization::typeName()}, std::make_unique<ParentSerialization>());
+    registerComponent<TransformComponent>(
+            std::string{TransformSerialization::typeName()}, std::make_unique<TransformSerialization>());
 }
 
 void SceneSerializationRegistry::registerEntry(std::unique_ptr<Entry> entry)

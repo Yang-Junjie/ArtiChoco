@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace arti::scene {
+namespace arti::core {
 
 class FixedTimestepAccumulator {
 public:
@@ -36,4 +36,4 @@ private:
     float m_accumulator{ 0.0f };
 };
 
-} // namespace arti::scene
+} // namespace arti::core

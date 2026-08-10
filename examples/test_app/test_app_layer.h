@@ -1,6 +1,6 @@
 #pragma once
+#include "artichoco/core/timestep_accumulator.h"
 #include "artichoco/scene/entity.h"
-#include "artichoco/scene/timestep_accumulator.h"
 #include "layer.h"
 #include "scene_components.h"
 
@@ -45,7 +45,7 @@ private:
     uint32_t m_frame_index{0};
     uint32_t m_fixed_frame_index{0};
     core::Timestep m_delta_time{};
-    scene::FixedTimestepAccumulator m_fixed_timestep;
+    core::FixedTimestepAccumulator m_fixed_timestep;
     std::unique_ptr<renderer::RenderDevice> m_render_device;
     std::unique_ptr<scene::Scene> m_scene;
     scene::Entity m_cube_entity;

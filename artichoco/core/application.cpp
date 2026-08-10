@@ -68,6 +68,7 @@ void Application::run()
 
         for (auto& layer : m_layer_stack) {
             layer->onRender();
+            layer->onImGuiRender();
         }
     }
 

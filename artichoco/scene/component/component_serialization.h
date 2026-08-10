@@ -4,9 +4,9 @@
 
 namespace arti::scene {
 
-template <typename Component> class Serialization {
+template <typename Component> class ComponentSerialization {
 public:
-    virtual ~Serialization() = default;
+    virtual ~ComponentSerialization() = default;
 
     virtual YAML::Node serialize(const Component& component) const = 0;
     virtual Component deserialize(const YAML::Node& node) const = 0;
