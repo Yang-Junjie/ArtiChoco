@@ -1,6 +1,7 @@
 #include "artichoco/renderer/detail/buffer_access.h"
 #include "artichoco/renderer/detail/texture_access.h"
 #include "vulkan_allocator.h"
+#include "vulkan_context.h"
 #include "vulkan_descriptor_allocator.h"
 #include "vulkan_device.h"
 #include "vulkan_frame_manager.h"
@@ -12,19 +13,28 @@
 
 namespace arti::renderer::vulkan {
 
-VulkanPassPrepareContext::VulkanPassPrepareContext(const VulkanDevice& device,
+VulkanPassPrepareContext::VulkanPassPrepareContext(const VulkanContext& vulkan_context,
+                                                   const VulkanDevice& device,
                                                    VulkanAllocator& allocator,
                                                    VulkanUploadContext& upload_context,
                                                    VulkanDescriptorAllocator& descriptor_allocator,
                                                    VulkanPipelineCache& pipeline_cache,
-                                                   size_t frame_slot_count) noexcept
-    : m_device(device),
+                                                   size_t frame_slot_count,
+                                                   VulkanPresentationInfo presentation_info) noexcept
+    : m_vulkan_context(vulkan_context),
+      m_device(device),
       m_allocator(allocator),
       m_upload_context(upload_context),
       m_descriptor_allocator(descriptor_allocator),
       m_pipeline_cache(pipeline_cache),
-      m_frame_slot_count(frame_slot_count)
+      m_frame_slot_count(frame_slot_count),
+      m_presentation_info(presentation_info)
 {}
+
+const VulkanContext& VulkanPassPrepareContext::vulkanContext() const noexcept
+{
+    return m_vulkan_context;
+}
 
 const VulkanDevice& VulkanPassPrepareContext::device() const noexcept
 {
@@ -49,6 +59,11 @@ VulkanDescriptorAllocator& VulkanPassPrepareContext::descriptorAllocator() const
 size_t VulkanPassPrepareContext::frameSlotCount() const noexcept
 {
     return m_frame_slot_count;
+}
+
+VulkanPresentationInfo VulkanPassPrepareContext::presentationInfo() const noexcept
+{
+    return m_presentation_info;
 }
 
 VulkanPipelineCache& VulkanPassPrepareContext::pipelineCache() const noexcept

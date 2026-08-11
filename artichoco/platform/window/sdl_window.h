@@ -5,11 +5,17 @@
 #include <SDL3/SDL.h>
 
 #include <atomic>
+#include <cstdint>
+#include <functional>
+#include <map>
 
 namespace arti::platform {
 
 class SDLWindow final : public core::Window, public core::InputProvider {
 public:
+    using SDLEventObserverId = uint64_t;
+    using SDLEventObserver = std::function<void(const SDL_Event&)>;
+
     explicit SDLWindow(const core::WindowCreateInfo& info);
     ~SDLWindow() override;
 
@@ -34,6 +40,8 @@ public:
     void setMousePosition(float x, float y) override;
     void setRawMouseMotion(bool enabled) override;
 
+    [[nodiscard]] SDLEventObserverId addSDLEventObserver(SDLEventObserver observer);
+    void removeSDLEventObserver(SDLEventObserverId observer_id) noexcept;
     SDL_Window* nativeHandle() const noexcept;
 
 private:
@@ -51,6 +59,8 @@ private:
     bool m_should_close{false};
     bool m_platform_acquired{false};
     bool m_text_input_active{false};
+    std::map<SDLEventObserverId, SDLEventObserver> m_sdl_event_observers;
+    SDLEventObserverId m_next_sdl_event_observer_id{1};
 };
 
 } // namespace arti::platform

@@ -167,12 +167,14 @@ bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes
     }
 
     vulkan::VulkanPassPrepareContext prepare_context{
+        m_context,
         m_device,
         m_allocator,
         m_upload_context,
         m_descriptor_allocator,
         m_pipeline_cache,
         m_frame_manager.frameSlotCount(),
+        m_frame_manager.presentationInfo(),
     };
     for (vulkan::VulkanPass* pass: passes) {
         pass->prepare(prepare_context);

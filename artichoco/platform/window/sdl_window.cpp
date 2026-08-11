@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace arti::platform {
 namespace {
@@ -336,6 +338,22 @@ void SDLWindow::setRawMouseMotion(bool enabled)
     }
 }
 
+SDLWindow::SDLEventObserverId SDLWindow::addSDLEventObserver(SDLEventObserver observer)
+{
+    if (!observer) {
+        return 0;
+    }
+
+    const SDLEventObserverId observer_id = m_next_sdl_event_observer_id++;
+    m_sdl_event_observers.emplace(observer_id, std::move(observer));
+    return observer_id;
+}
+
+void SDLWindow::removeSDLEventObserver(SDLEventObserverId observer_id) noexcept
+{
+    m_sdl_event_observers.erase(observer_id);
+}
+
 SDL_Window* SDLWindow::nativeHandle() const noexcept
 {
     return m_window;
@@ -358,6 +376,16 @@ void SDLWindow::updateFramebufferSize()
 
 void SDLWindow::handleEvent(const SDL_Event& event)
 {
+    std::vector<SDLEventObserver> observers;
+    observers.reserve(m_sdl_event_observers.size());
+    for (const auto& [observer_id, observer] : m_sdl_event_observers) {
+        (void)observer_id;
+        observers.push_back(observer);
+    }
+    for (const SDLEventObserver& observer : observers) {
+        observer(event);
+    }
+
     const auto dispatch = [this](core::Event& translated_event) {
         if (m_event_callback) {
             m_event_callback(translated_event);

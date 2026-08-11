@@ -26,6 +26,7 @@ public:
     const vk::raii::ImageView& imageView(uint32_t index) const;
     vk::Format format() const noexcept;
     vk::Extent2D extent() const noexcept;
+    uint32_t minImageCount() const noexcept;
     size_t imageCount() const noexcept;
 
 private:
@@ -37,6 +38,7 @@ private:
     std::vector<vk::raii::ImageView> m_image_views;
     vk::Format m_format{vk::Format::eUndefined};
     vk::Extent2D m_extent{};
+    uint32_t m_min_image_count{0};
 };
 
 } // namespace arti::renderer::vulkan

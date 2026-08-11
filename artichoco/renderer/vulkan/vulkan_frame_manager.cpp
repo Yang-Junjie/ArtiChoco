@@ -325,6 +325,15 @@ size_t VulkanFrameManager::frameSlotCount() const noexcept
     return m_frame_slots.size();
 }
 
+VulkanPresentationInfo VulkanFrameManager::presentationInfo() const noexcept
+{
+    return {
+        m_swapchain.format(),
+        m_swapchain.minImageCount(),
+        static_cast<uint32_t>(m_swapchain.imageCount()),
+    };
+}
+
 bool VulkanFrameManager::recreateSwapchain()
 {
     if (m_window.getFramebufferWidth() == 0 || m_window.getFramebufferHeight() == 0) {

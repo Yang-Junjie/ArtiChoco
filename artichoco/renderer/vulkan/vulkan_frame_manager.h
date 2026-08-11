@@ -5,6 +5,7 @@
 #include "vulkan_depth_buffer.h"
 #include "vulkan_device.h"
 #include "vulkan_frame_slot.h"
+#include "vulkan_presentation_info.h"
 #include "vulkan_surface.h"
 #include "vulkan_swapchain.h"
 
@@ -102,6 +103,7 @@ public:
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
     size_t frameSlotCount() const noexcept;
+    VulkanPresentationInfo presentationInfo() const noexcept;
 
 private:
     friend class VulkanFrameToken;

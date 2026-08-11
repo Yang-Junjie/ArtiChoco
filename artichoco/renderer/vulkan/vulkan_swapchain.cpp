@@ -151,6 +151,7 @@ bool VulkanSwapchain::recreate()
     m_image_views = std::move(new_image_views);
     m_format = surface_format.format;
     m_extent = extent;
+    m_min_image_count = capabilities.minImageCount;
 
     getLogChannel().info(
         "Created Vulkan swapchain ({}x{}, {} images, {})",
@@ -168,6 +169,7 @@ void VulkanSwapchain::invalidate() noexcept
     m_swapchain = vk::raii::SwapchainKHR{nullptr};
     m_format = vk::Format::eUndefined;
     m_extent = vk::Extent2D{};
+    m_min_image_count = 0;
 }
 
 bool VulkanSwapchain::isRenderable() const noexcept
@@ -198,6 +200,11 @@ vk::Format VulkanSwapchain::format() const noexcept
 vk::Extent2D VulkanSwapchain::extent() const noexcept
 {
     return m_extent;
+}
+
+uint32_t VulkanSwapchain::minImageCount() const noexcept
+{
+    return m_min_image_count;
 }
 
 size_t VulkanSwapchain::imageCount() const noexcept
