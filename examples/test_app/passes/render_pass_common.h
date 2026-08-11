@@ -63,6 +63,24 @@ inline renderer::vulkan::VulkanImageState computeStorageWriteState()
     };
 }
 
+inline renderer::vulkan::VulkanImageState transferReadState()
+{
+    return {
+        vk::PipelineStageFlagBits2::eCopy,
+        vk::AccessFlagBits2::eTransferRead,
+        vk::ImageLayout::eTransferSrcOptimal,
+    };
+}
+
+inline renderer::vulkan::VulkanImageState transferWriteState()
+{
+    return {
+        vk::PipelineStageFlagBits2::eCopy,
+        vk::AccessFlagBits2::eTransferWrite,
+        vk::ImageLayout::eTransferDstOptimal,
+    };
+}
+
 inline renderer::vulkan::VulkanImageState fragmentSampledReadState()
 {
     return {

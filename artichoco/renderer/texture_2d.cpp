@@ -18,6 +18,7 @@ struct Texture2D::Impl {
     detail::DeferredResourceOwnerPtr owner;
     uint32_t width{ 0 };
     uint32_t height{ 0 };
+    uint32_t mip_levels{ 0 };
     TextureFormat format{ TextureFormat::RGBA8Srgb };
 
     ~Impl() {
@@ -40,12 +41,14 @@ uint32_t Texture2D::width() const noexcept { return m_impl->width; }
 
 uint32_t Texture2D::height() const noexcept { return m_impl->height; }
 
+uint32_t Texture2D::mipLevels() const noexcept { return m_impl->mip_levels; }
+
 TextureFormat Texture2D::format() const noexcept { return m_impl->format; }
 
 Texture2D detail::TextureAccess::create(vulkan::VulkanAllocator& allocator,
         vulkan::VulkanUploadContext& upload_context, const vulkan::VulkanDevice& device,
         DeferredResourceOwnerPtr owner, std::span<const std::byte> texels, uint32_t width,
-        uint32_t height, TextureFormat format) {
+        uint32_t height, TextureFormat format, bool generate_mipmaps) {
     if (!owner || width == 0 || height == 0) {
         throw std::invalid_argument("A texture requires an owner and non-zero dimensions.");
     }
@@ -55,42 +58,57 @@ Texture2D detail::TextureAccess::create(vulkan::VulkanAllocator& allocator,
         throw std::invalid_argument("Texture data does not match its dimensions and format.");
     }
 
+    uint32_t mip_levels = 1;
+    vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
+    if (generate_mipmaps) {
+        mip_levels = vulkan::imageMipLevelCount({ width, height });
+        usage |= vk::ImageUsageFlagBits::eTransferSrc;
+    }
+
     const vk::Format vulkan_format = detail::toVulkanFormat(format);
     auto impl = std::make_unique<Texture2D::Impl>();
     vulkan::VulkanImageCreateInfo image_info;
     image_info.extent = vk::Extent2D{ width, height };
     image_info.format = vulkan_format;
-    image_info.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
+    image_info.usage = usage;
+    image_info.mip_levels = mip_levels;
     impl->image = vulkan::VulkanImage{ device, allocator, image_info };
     impl->owner = std::move(owner);
     impl->width = width;
     impl->height = height;
+    impl->mip_levels = mip_levels;
     impl->format = format;
     const vulkan::VulkanImageState shader_read{
         vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eFragmentShader,
         vk::AccessFlagBits2::eShaderSampledRead,
         vk::ImageLayout::eShaderReadOnlyOptimal,
     };
-    vk::ImageSubresourceLayers layers;
-    layers.setAspectMask(vk::ImageAspectFlagBits::eColor)
-            .setMipLevel(0)
-            .setBaseArrayLayer(0)
-            .setLayerCount(1);
-    vk::BufferImageCopy copy;
-    copy.setBufferOffset(0)
-            .setBufferRowLength(0)
-            .setBufferImageHeight(0)
-            .setImageSubresource(layers)
-            .setImageOffset({ 0, 0, 0 })
-            .setImageExtent({ width, height, 1 });
-    vk::ImageSubresourceRange range;
-    range.setAspectMask(vk::ImageAspectFlagBits::eColor)
-            .setBaseMipLevel(0)
-            .setLevelCount(1)
-            .setBaseArrayLayer(0)
-            .setLayerCount(1);
-    upload_context.uploadImage(texels, impl->image.image(),
-            std::span<const vk::BufferImageCopy>{ &copy, 1 }, range, shader_read);
+    if (generate_mipmaps) {
+        upload_context.uploadImageWithMipmaps(texels, impl->image.image(),
+                vk::Extent2D{ width, height }, vulkan_format,
+                static_cast<uint32_t>(bytes_per_texel), shader_read);
+    } else {
+        vk::ImageSubresourceLayers layers;
+        layers.setAspectMask(vk::ImageAspectFlagBits::eColor)
+                .setMipLevel(0)
+                .setBaseArrayLayer(0)
+                .setLayerCount(1);
+        vk::BufferImageCopy copy;
+        copy.setBufferOffset(0)
+                .setBufferRowLength(0)
+                .setBufferImageHeight(0)
+                .setImageSubresource(layers)
+                .setImageOffset({ 0, 0, 0 })
+                .setImageExtent({ width, height, 1 });
+        vk::ImageSubresourceRange range;
+        range.setAspectMask(vk::ImageAspectFlagBits::eColor)
+                .setBaseMipLevel(0)
+                .setLevelCount(1)
+                .setBaseArrayLayer(0)
+                .setLayerCount(1);
+        upload_context.uploadImage(texels, impl->image.image(),
+                std::span<const vk::BufferImageCopy>{ &copy, 1 }, range, shader_read);
+    }
     return Texture2D{ std::move(impl) };
 }
 

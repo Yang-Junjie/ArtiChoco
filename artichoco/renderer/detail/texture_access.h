@@ -22,7 +22,7 @@ public:
     static Texture2D create(vulkan::VulkanAllocator& allocator,
             vulkan::VulkanUploadContext& upload_context, const vulkan::VulkanDevice& device,
             DeferredResourceOwnerPtr owner, std::span<const std::byte> texels, uint32_t width,
-            uint32_t height, TextureFormat format);
+            uint32_t height, TextureFormat format, bool generate_mipmaps);
     static TextureCube createCube(vulkan::VulkanAllocator& allocator,
             vulkan::VulkanUploadContext& upload_context, const vulkan::VulkanDevice& device,
             DeferredResourceOwnerPtr owner, std::span<const TextureCubeMipData> mip_levels,

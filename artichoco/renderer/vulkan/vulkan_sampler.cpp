@@ -1,14 +1,20 @@
 #include "vulkan_sampler.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace arti::renderer::vulkan {
 
 VulkanSampler::VulkanSampler(const VulkanDevice& device, const VulkanSamplerCreateInfo& info)
 {
-    if (info.anisotropy_enable && !device.samplerAnisotropyEnabled()) {
-        throw std::invalid_argument(
-            "Anisotropic filtering requires the samplerAnisotropy device feature, which is not enabled.");
+    float max_anisotropy = info.max_anisotropy;
+    if (info.anisotropy_enable) {
+        if (!device.samplerAnisotropyEnabled()) {
+            throw std::invalid_argument(
+                "Anisotropic filtering requires the samplerAnisotropy device feature, which is not enabled.");
+        }
+        max_anisotropy = std::min(
+            max_anisotropy, device.physicalDevice().getProperties().limits.maxSamplerAnisotropy);
     }
 
     vk::SamplerCreateInfo sampler_info{};
@@ -20,7 +26,7 @@ VulkanSampler::VulkanSampler(const VulkanDevice& device, const VulkanSamplerCrea
         .setAddressModeW(info.address_mode_w)
         .setMipLodBias(info.mip_lod_bias)
         .setAnisotropyEnable(info.anisotropy_enable)
-        .setMaxAnisotropy(info.max_anisotropy)
+        .setMaxAnisotropy(max_anisotropy)
         .setCompareEnable(info.compare_enable)
         .setCompareOp(info.compare_op)
         .setMinLod(info.min_lod)

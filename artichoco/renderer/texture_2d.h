@@ -21,6 +21,7 @@ public:
 
     uint32_t width() const noexcept;
     uint32_t height() const noexcept;
+    uint32_t mipLevels() const noexcept;
     TextureFormat format() const noexcept;
 
 private:

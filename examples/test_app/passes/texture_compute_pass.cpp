@@ -62,8 +62,11 @@ struct TextureComputePass::Impl {
         renderer::vulkan::VulkanImageCreateInfo image_info;
         image_info.extent = required_extent;
         image_info.format = vk::Format::eR8G8B8A8Unorm;
-        image_info.usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled;
+        image_info.usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
+                           vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst;
+        image_info.mip_levels = renderer::vulkan::imageMipLevelCount(required_extent);
         output = std::make_unique<renderer::vulkan::VulkanImage>(context.device(), context.allocator(), image_info);
+        output_level_zero_view = output->createLayerView(context.device(), 0, 0);
         output_initialized = false;
     }
 
@@ -74,6 +77,7 @@ struct TextureComputePass::Impl {
     const renderer::vulkan::VulkanComputePipeline* pipeline{nullptr};
     renderer::vulkan::VulkanSampler input_sampler;
     std::unique_ptr<renderer::vulkan::VulkanImage> output;
+    vk::raii::ImageView output_level_zero_view{nullptr};
     std::vector<renderer::vulkan::VulkanBindingSet> binding_sets;
     float time{0.0f};
     bool output_initialized{false};
@@ -116,13 +120,18 @@ void TextureComputePass::record(renderer::vulkan::VulkanPassContext& context)
     auto& bindings = m_impl->binding_sets.at(frame.frameSlotIndex());
     bindings.writeSampledImage("source_texture", *source_image.imageView());
     bindings.writeSampler("source_sampler", *m_impl->input_sampler.handle());
-    bindings.writeStorageImage("output_texture", *m_impl->output->imageView());
+    bindings.writeStorageImage("output_texture", *m_impl->output_level_zero_view);
 
     const auto previous_state = m_impl->output_initialized ? fragmentSampledReadState() : undefinedImageState();
+    vk::ImageSubresourceRange all_mip_range = colorSubresourceRange();
+    all_mip_range.setLevelCount(m_impl->output->mipLevels());
+    const auto to_transfer = renderer::vulkan::makeImageBarrier(
+        m_impl->output->image(), all_mip_range, previous_state, transferWriteState());
     const auto to_compute = renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(), colorSubresourceRange(), previous_state, computeStorageWriteState());
+        m_impl->output->image(), colorSubresourceRange(), transferWriteState(), computeStorageWriteState());
 
     auto& commands = context.commands();
+    commands.imageBarrier(to_transfer);
     commands.imageBarrier(to_compute);
     commands.bindPipeline(*m_impl->pipeline);
     commands.bindBindingSet(*m_impl->pipeline, bindings);
@@ -133,8 +142,13 @@ void TextureComputePass::record(renderer::vulkan::VulkanPassContext& context)
                       (extent.height + m_impl->shader->groupSizeY() - 1) / m_impl->shader->groupSizeY(),
                       1);
 
+    const auto to_mip_source = renderer::vulkan::makeImageBarrier(
+        m_impl->output->image(), colorSubresourceRange(), computeStorageWriteState(), transferReadState());
+    commands.imageBarrier(to_mip_source);
+    commands.generateMipmaps(m_impl->output->image(), extent);
+
     const auto to_graphics = renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(), colorSubresourceRange(), computeStorageWriteState(), fragmentSampledReadState());
+        m_impl->output->image(), all_mip_range, transferReadState(), fragmentSampledReadState());
     commands.imageBarrier(to_graphics);
     m_impl->output_initialized = true;
 }
