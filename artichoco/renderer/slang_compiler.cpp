@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <slang/slang-com-ptr.h>
 #include <slang/slang.h>
 #include <stdexcept>
@@ -140,19 +141,37 @@ void logReflection(const ShaderReflection& reflection) {
     }
 }
 
+struct GlobalCompileState {
+    GlobalCompileState() {
+        checkSlangResult(slang::createGlobalSession(global_session.writeRef()),
+                "slang::createGlobalSession");
+    }
+
+    std::mutex mutex;
+    Slang::ComPtr<slang::IGlobalSession> global_session;
+};
+
+GlobalCompileState& globalCompileState() {
+    static GlobalCompileState state;
+    return state;
+}
+
 struct CompileContext {
+    std::unique_lock<std::mutex> lock;
+    Slang::ComPtr<slang::IGlobalSession> global_session;
     Slang::ComPtr<slang::ISession> session;
     Slang::ComPtr<slang::IModule> module;
 };
 
 CompileContext createCompileContext(const std::filesystem::path& source_path) {
-    Slang::ComPtr<slang::IGlobalSession> global_session;
-    checkSlangResult(slang::createGlobalSession(global_session.writeRef()),
-            "slang::createGlobalSession");
+    GlobalCompileState& global_state = globalCompileState();
+    CompileContext context;
+    context.lock = std::unique_lock{ global_state.mutex };
+    context.global_session = global_state.global_session;
 
     slang::TargetDesc target_desc{};
     target_desc.format = SLANG_SPIRV;
-    target_desc.profile = global_session->findProfile("spirv_1_6");
+    target_desc.profile = context.global_session->findProfile("spirv_1_6");
     target_desc.flags = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
     if (target_desc.profile == SLANG_PROFILE_UNKNOWN) {
         throw std::runtime_error("Slang does not provide the spirv_1_6 profile.");
@@ -167,8 +186,8 @@ CompileContext createCompileContext(const std::filesystem::path& source_path) {
     session_desc.searchPathCount = 1;
     session_desc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
 
-    CompileContext context;
-    checkSlangResult(global_session->createSession(session_desc, context.session.writeRef()),
+    checkSlangResult(
+            context.global_session->createSession(session_desc, context.session.writeRef()),
             "IGlobalSession::createSession");
 
     const std::string source = readSource(source_path);

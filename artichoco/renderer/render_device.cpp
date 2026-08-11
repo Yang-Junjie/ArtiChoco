@@ -156,6 +156,16 @@ bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes
         throw std::invalid_argument("RenderDevice requires at least one valid Vulkan pass.");
     }
 
+    // Swapchain recreation waits for in-flight work, so it must happen before passes replace
+    // extent-dependent images in prepare().
+    auto begin_result = m_frame_manager.beginFrame();
+    if (begin_result.completed_frame_slot) {
+        m_release_queue.onFrameSlotCompleted(*begin_result.completed_frame_slot);
+    }
+    if (!begin_result.frame) {
+        return false;
+    }
+
     vulkan::VulkanPassPrepareContext prepare_context{
         m_device,
         m_allocator,
@@ -166,14 +176,6 @@ bool RenderDevice::Impl::renderFrame(std::span<vulkan::VulkanPass* const> passes
     };
     for (vulkan::VulkanPass* pass: passes) {
         pass->prepare(prepare_context);
-    }
-
-    auto begin_result = m_frame_manager.beginFrame();
-    if (begin_result.completed_frame_slot) {
-        m_release_queue.onFrameSlotCompleted(*begin_result.completed_frame_slot);
-    }
-    if (!begin_result.frame) {
-        return false;
     }
 
     auto& frame = *begin_result.frame;
