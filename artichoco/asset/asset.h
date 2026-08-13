@@ -1,45 +1,31 @@
 #pragma once
-
 #include "artichoco/core/uuid.h"
 
-#include <concepts>
-#include <cstddef>
 #include <functional>
 #include <string>
-#include <string_view>
-#include <type_traits>
 
 namespace arti::asset {
 
-class AssetType {
+using AssetType = std::string;
+
+// Typed reference to an Asset of type T. The Asset framework itself stores
+// raw core::UUID handles; concrete asset types use AssetHandle<T> to keep
+// references type-safe at compile time.
+template<typename T>
+class AssetHandle {
 public:
-    AssetType() = default;
-    explicit AssetType(std::string_view name)
-            : m_name(name) {}
+    constexpr AssetHandle() noexcept = default;
+    explicit constexpr AssetHandle(core::UUID id) noexcept
+            : m_id(id) {}
 
-    [[nodiscard]] bool isValid() const noexcept { return !m_name.empty(); }
-    explicit operator bool() const noexcept { return isValid(); }
+    [[nodiscard]] constexpr core::UUID id() const noexcept { return m_id; }
+    [[nodiscard]] constexpr bool isValid() const noexcept { return m_id.isValid(); }
 
-    [[nodiscard]] std::string_view name() const noexcept { return m_name; }
-
-    bool operator==(const AssetType&) const noexcept = default;
+    constexpr auto operator<=>(const AssetHandle&) const noexcept = default;
 
 private:
-    std::string m_name;
+    core::UUID m_id{};
 };
-
-template<typename T>
-struct AssetTraits;
-
-template<typename T>
-concept HasAssetTraits = requires {
-    { AssetTraits<std::remove_cvref_t<T>>::name } -> std::convertible_to<std::string_view>;
-};
-
-template<HasAssetTraits T>
-[[nodiscard]] AssetType assetType() {
-    return AssetType{ std::string_view{ AssetTraits<std::remove_cvref_t<T>>::name } };
-}
 
 class Asset {
 public:
@@ -60,16 +46,13 @@ public:
 private:
     core::UUID m_handle;
 };
-
 } // namespace arti::asset
 
 namespace std {
-
-template<>
-struct hash<arti::asset::AssetType> {
-    size_t operator()(const arti::asset::AssetType& type) const noexcept {
-        return hash<string_view>{}(type.name());
+template<typename T>
+struct hash<arti::asset::AssetHandle<T>> {
+    size_t operator()(arti::asset::AssetHandle<T> handle) const noexcept {
+        return hash<arti::core::UUID>{}(handle.id());
     }
 };
-
 } // namespace std

@@ -2,7 +2,8 @@
 
 namespace arti::asset {
 
-const core::Logger::Channel& getLogChannel() {
+const core::Logger::Channel& getLogChannel()
+{
     static const auto channel = core::Logger::registerChannel("ArtiAsset");
     return *channel;
 }

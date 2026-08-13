@@ -20,4 +20,3 @@ HeaderFilterRegex: ''
 ExcludeHeaderFilterRegex: 'third_party/.*'
 FormatStyle:     file
 SystemHeaders:   false
-...
