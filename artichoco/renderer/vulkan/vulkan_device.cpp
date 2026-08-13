@@ -136,6 +136,17 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
         extensions.push_back(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
         extensions.push_back(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
     }
+    const uint32_t api_version = m_physical_device.getProperties().apiVersion;
+    const bool image_format_list_available = api_version >= VK_API_VERSION_1_2 ||
+        hasDeviceExtension(m_physical_device, VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME);
+    m_mutable_swapchain_format_enabled = image_format_list_available &&
+        hasDeviceExtension(m_physical_device, VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME);
+    if (m_mutable_swapchain_format_enabled) {
+        extensions.push_back(VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME);
+        if (api_version < VK_API_VERSION_1_2) {
+            extensions.push_back(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME);
+        }
+    }
 #if defined(__APPLE__)
     if (hasDeviceExtension(m_physical_device, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME)) {
         extensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
@@ -205,6 +216,11 @@ uint32_t VulkanDevice::presentQueueFamily() const noexcept
 bool VulkanDevice::usesCore13() const noexcept
 {
     return m_uses_core_13;
+}
+
+bool VulkanDevice::mutableSwapchainFormatEnabled() const noexcept
+{
+    return m_mutable_swapchain_format_enabled;
 }
 
 bool VulkanDevice::independentBlendEnabled() const noexcept

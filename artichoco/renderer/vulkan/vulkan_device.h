@@ -20,6 +20,7 @@ public:
     uint32_t graphicsQueueFamily() const noexcept;
     uint32_t presentQueueFamily() const noexcept;
     bool usesCore13() const noexcept;
+    bool mutableSwapchainFormatEnabled() const noexcept;
     bool independentBlendEnabled() const noexcept;
     bool samplerAnisotropyEnabled() const noexcept;
 
@@ -31,6 +32,7 @@ private:
     uint32_t m_graphics_queue_family{0};
     uint32_t m_present_queue_family{0};
     bool m_uses_core_13{false};
+    bool m_mutable_swapchain_format_enabled{false};
     bool m_independent_blend_enabled{false};
     bool m_sampler_anisotropy_enabled{false};
 };

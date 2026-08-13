@@ -10,21 +10,56 @@
 namespace arti::renderer::vulkan {
 namespace {
 
-vk::SurfaceFormatKHR chooseSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& formats)
+struct SwapchainFormat {
+    vk::SurfaceFormatKHR surface;
+    vk::Format view{vk::Format::eUndefined};
+    bool mutable_format{false};
+};
+
+SwapchainFormat chooseSurfaceFormat(
+    const std::vector<vk::SurfaceFormatKHR>& formats, const VulkanDevice& device)
 {
-    constexpr std::array preferred_formats = {
-        vk::Format::eB8G8R8A8Srgb,
-        vk::Format::eR8G8B8A8Srgb,
+    struct FormatPair {
+        vk::Format unorm;
+        vk::Format srgb;
     };
-    for (const auto preferred : preferred_formats) {
-        const auto it = std::ranges::find_if(formats, [preferred](const vk::SurfaceFormatKHR& format) {
-            return format.format == preferred && format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
-        });
-        if (it != formats.end()) {
-            return *it;
+    constexpr std::array preferred_pairs = {
+        FormatPair{vk::Format::eB8G8R8A8Unorm, vk::Format::eB8G8R8A8Srgb},
+        FormatPair{vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Srgb},
+    };
+
+    if (device.mutableSwapchainFormatEnabled()) {
+        for (const auto [unorm, srgb] : preferred_pairs) {
+            const auto it = std::ranges::find_if(formats, [unorm](const vk::SurfaceFormatKHR& format) {
+                return format.format == unorm &&
+                    format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+            });
+            if (it == formats.end()) {
+                continue;
+            }
+
+            const vk::FormatFeatureFlags unorm_features =
+                device.physicalDevice().getFormatProperties(unorm).optimalTilingFeatures;
+            const vk::FormatFeatureFlags srgb_features =
+                device.physicalDevice().getFormatProperties(srgb).optimalTilingFeatures;
+            if ((unorm_features & vk::FormatFeatureFlagBits::eStorageImage) &&
+                (unorm_features & vk::FormatFeatureFlagBits::eColorAttachment) &&
+                (srgb_features & vk::FormatFeatureFlagBits::eColorAttachment)) {
+                return {*it, srgb, true};
+            }
         }
     }
-    return formats.front();
+
+    for (const auto [unorm, srgb] : preferred_pairs) {
+        const auto it = std::ranges::find_if(formats, [srgb](const vk::SurfaceFormatKHR& format) {
+            return format.format == srgb &&
+                format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+        });
+        if (it != formats.end()) {
+            return {*it, srgb, false};
+        }
+    }
+    return {formats.front(), formats.front().format, false};
 }
 
 vk::PresentModeKHR choosePresentMode(const std::vector<vk::PresentModeKHR>& modes)
@@ -88,7 +123,8 @@ bool VulkanSwapchain::recreate()
         throw std::runtime_error("The Vulkan surface does not support color attachment images.");
     }
 
-    const auto surface_format = chooseSurfaceFormat(formats);
+    const auto swapchain_format = chooseSurfaceFormat(formats, m_device);
+    const auto& surface_format = swapchain_format.surface;
     const auto present_mode = choosePresentMode(present_modes);
     const auto extent = chooseExtent(capabilities, m_window);
     if (extent.width == 0 || extent.height == 0) {
@@ -118,6 +154,15 @@ bool VulkanSwapchain::recreate()
         .setClipped(true)
         .setOldSwapchain(*m_swapchain);
 
+    std::array<vk::Format, 2> view_formats{};
+    vk::ImageFormatListCreateInfo format_list{};
+    if (swapchain_format.mutable_format) {
+        view_formats = {surface_format.format, swapchain_format.view};
+        format_list.setViewFormats(view_formats);
+        create_info.setFlags(vk::SwapchainCreateFlagBitsKHR::eMutableFormat)
+            .setPNext(&format_list);
+    }
+
     if (queue_families[0] != queue_families[1]) {
         create_info.setImageSharingMode(vk::SharingMode::eConcurrent).setQueueFamilyIndices(queue_families);
     } else {
@@ -137,10 +182,13 @@ bool VulkanSwapchain::recreate()
             .setLayerCount(1);
 
         vk::ImageViewCreateInfo view_info{};
+        vk::ImageViewUsageCreateInfo view_usage{};
+        view_usage.setUsage(vk::ImageUsageFlagBits::eColorAttachment);
         view_info.setImage(image)
             .setViewType(vk::ImageViewType::e2D)
-            .setFormat(surface_format.format)
-            .setSubresourceRange(range);
+            .setFormat(swapchain_format.view)
+            .setSubresourceRange(range)
+            .setPNext(&view_usage);
         new_image_views.emplace_back(m_device.device(), view_info);
     }
 
@@ -149,15 +197,16 @@ bool VulkanSwapchain::recreate()
     m_swapchain = std::move(new_swapchain);
     m_images = std::move(new_images);
     m_image_views = std::move(new_image_views);
-    m_format = surface_format.format;
+    m_format = swapchain_format.view;
     m_extent = extent;
     m_min_image_count = capabilities.minImageCount;
 
     getLogChannel().info(
-        "Created Vulkan swapchain ({}x{}, {} images, {})",
+        "Created Vulkan swapchain ({}x{}, {} images, image {}, view {})",
         m_extent.width,
         m_extent.height,
         m_images.size(),
+        vk::to_string(surface_format.format),
         vk::to_string(m_format));
     return true;
 }
