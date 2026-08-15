@@ -53,7 +53,7 @@ YAML::Node SceneSerializer::serialize(const Scene& scene) const
                 components[std::string(entry->typeName())] = entry->serialize(scene.m_registry, entity);
             }
         }
-        entity_node["Components"] = components;
+        entity_node["EntityComponents"] = components;
         entities.push_back(entity_node);
     }
 
@@ -100,9 +100,9 @@ void SceneSerializer::deserialize(const YAML::Node& node, Scene& scene) const
             throw std::invalid_argument("Each serialized Entity must be a YAML map.");
         }
 
-        const YAML::Node components_node = entity_node["Components"];
+        const YAML::Node components_node = entity_node["EntityComponents"];
         if (!components_node || !components_node.IsMap()) {
-            throw std::invalid_argument("Each serialized Entity must contain a 'Components' map.");
+            throw std::invalid_argument("Each serialized Entity must contain a 'EntityComponents' map.");
         }
 
         PendingEntity pending;

@@ -43,6 +43,7 @@ private:
         node.push_back(value.x);
         node.push_back(value.y);
         node.push_back(value.z);
+        node.SetStyle(YAML::EmitterStyle::Flow);
         return node;
     }
 
@@ -62,6 +63,7 @@ private:
         node.push_back(value.x);
         node.push_back(value.y);
         node.push_back(value.z);
+        node.SetStyle(YAML::EmitterStyle::Flow);
         return node;
     }
 
