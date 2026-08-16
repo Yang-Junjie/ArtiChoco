@@ -52,6 +52,8 @@ struct ParentComponent {
 
 struct WorldTransformComponent {
     glm::mat4 world{ 1.0f };
+    glm::mat4 local{ 1.0f };
+    core::UUID parent_id{};
     bool dirty{ true };
 };
 } // namespace arti::scene

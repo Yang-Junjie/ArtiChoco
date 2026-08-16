@@ -10,6 +10,8 @@
 namespace arti::scene {
 
 class Scene;
+class SceneEntityStorage;
+class SceneHierarchy;
 
 namespace detail {
 
@@ -20,6 +22,17 @@ inline constexpr bool isRequiredComponent =
         std::is_same_v<std::remove_cvref_t<Component>, TransformComponent> ||
         std::is_same_v<std::remove_cvref_t<Component>, ParentComponent> ||
         std::is_same_v<std::remove_cvref_t<Component>, WorldTransformComponent>;
+
+template<typename Component>
+inline constexpr bool isMutableSceneOwnedComponent =
+        (std::is_same_v<std::remove_cvref_t<Component>, IDComponent> ||
+                std::is_same_v<std::remove_cvref_t<Component>, ParentComponent> ||
+                std::is_same_v<std::remove_cvref_t<Component>, WorldTransformComponent>) &&
+        !std::is_const_v<std::remove_reference_t<Component>>;
+
+template<typename Component>
+using SceneViewComponent = std::conditional_t<isMutableSceneOwnedComponent<Component>,
+        const std::remove_cvref_t<Component>, Component>;
 
 } // namespace detail
 
@@ -44,7 +57,7 @@ public:
     }
 
     template<typename Component>
-        requires(!std::is_same_v<std::remove_cvref_t<Component>, IDComponent>)
+        requires(!detail::isMutableSceneOwnedComponent<Component>)
     Component& getComponent() {
         requireComponent<Component>();
         return m_registry->get<Component>(m_handle);
@@ -79,6 +92,8 @@ public:
 
 private:
     friend class Scene;
+    friend class SceneEntityStorage;
+    friend class SceneHierarchy;
 
     Entity(entt::entity handle, entt::registry& registry) noexcept
             : m_handle(handle),

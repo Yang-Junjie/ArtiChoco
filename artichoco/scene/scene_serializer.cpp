@@ -25,15 +25,17 @@ YAML::Node SceneSerializer::serialize(const Scene& scene) const
 {
     YAML::Node root;
     YAML::Node entities(YAML::NodeType::Sequence);
+    const auto& scene_registry = scene.m_entity_storage.registry();
 
     std::vector<entt::entity> entity_handles;
-    const auto* entity_storage = scene.m_registry.storage<entt::entity>();
+    const auto* entity_storage = scene_registry.storage<entt::entity>();
     entity_handles.reserve(entity_storage->size());
     for (auto [entity] : entity_storage->each()) {
         entity_handles.push_back(entity);
     }
-    std::ranges::sort(entity_handles, [&scene](entt::entity lhs, entt::entity rhs) {
-        return scene.m_registry.get<IDComponent>(lhs).id.value() < scene.m_registry.get<IDComponent>(rhs).id.value();
+    std::ranges::sort(entity_handles, [&scene_registry](entt::entity lhs, entt::entity rhs) {
+        return scene_registry.get<IDComponent>(lhs).id.value() <
+               scene_registry.get<IDComponent>(rhs).id.value();
     });
 
     std::vector<const SceneSerializationRegistry::Entry*> serialization_entries;
@@ -49,8 +51,9 @@ YAML::Node SceneSerializer::serialize(const Scene& scene) const
         YAML::Node entity_node;
         YAML::Node components(YAML::NodeType::Map);
         for (const SceneSerializationRegistry::Entry* entry : serialization_entries) {
-            if (entry->contains(scene.m_registry, entity)) {
-                components[std::string(entry->typeName())] = entry->serialize(scene.m_registry, entity);
+            if (entry->contains(scene_registry, entity)) {
+                components[std::string(entry->typeName())] =
+                        entry->serialize(scene_registry, entity);
             }
         }
         entity_node["EntityComponents"] = components;
@@ -184,9 +187,10 @@ void SceneSerializer::deserialize(const YAML::Node& node, Scene& scene) const
         staging.createEntityWithUUID(pending.id, pending.tag);
     }
     for (const PendingEntity& pending : pending_entities) {
-        const entt::entity entity = staging.m_entity_lookup.at(pending.id);
+        const entt::entity entity = staging.m_entity_storage.resolveEntity(pending.id);
         for (const PendingComponent& component : pending.components) {
-            component.serialization->deserialize(staging.m_registry, entity, component.node);
+            component.serialization->deserialize(
+                    staging.m_entity_storage.registry(), entity, component.node);
         }
     }
     for (const PendingEntity& pending : pending_entities) {
@@ -196,9 +200,7 @@ void SceneSerializer::deserialize(const YAML::Node& node, Scene& scene) const
     }
     staging.updateWorldTransforms();
 
-    scene.clearEntities();
-    scene.m_registry = std::move(staging.m_registry);
-    scene.m_entity_lookup = std::move(staging.m_entity_lookup);
+    scene.m_entity_storage.replaceWith(std::move(staging.m_entity_storage));
 }
 
 void SceneSerializer::save(const Scene& scene, const std::filesystem::path& path) const
@@ -207,15 +209,18 @@ void SceneSerializer::save(const Scene& scene, const std::filesystem::path& path
     YAML::Emitter emitter;
     emitter << root;
     if (!emitter.good()) {
+        getLogChannel().error("Failed to emit Scene YAML: {}", emitter.GetLastError());
         throw std::runtime_error(std::string{"Failed to emit Scene YAML: "} + emitter.GetLastError());
     }
 
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output) {
+        getLogChannel().error("Failed to open Scene file for writing: '{}'", path.string());
         throw std::runtime_error("Failed to open Scene file for writing: " + path.string());
     }
     output << emitter.c_str();
     if (!output) {
+        getLogChannel().error("Failed to write Scene file: '{}'", path.string());
         throw std::runtime_error("Failed to write Scene file: " + path.string());
     }
     getLogChannel().info("Saved scene to '{}' ({} entities)", path.string(), root["Entities"].size());
@@ -225,6 +230,7 @@ void SceneSerializer::load(const std::filesystem::path& path, Scene& scene) cons
 {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
+        getLogChannel().error("Failed to open Scene file for reading: '{}'", path.string());
         throw std::runtime_error("Failed to open Scene file for reading: " + path.string());
     }
 
@@ -232,6 +238,8 @@ void SceneSerializer::load(const std::filesystem::path& path, Scene& scene) cons
     try {
         node = YAML::Load(input);
     } catch (const YAML::Exception& exception) {
+        getLogChannel().error(
+                "Failed to parse Scene YAML '{}': {}", path.string(), exception.what());
         throw std::runtime_error("Failed to parse Scene YAML '" + path.string() + "': " + exception.what());
     }
     deserialize(node, scene);
