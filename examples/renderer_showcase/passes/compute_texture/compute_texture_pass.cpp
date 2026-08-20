@@ -10,7 +10,7 @@
 #include "artichoco/renderer/vulkan/vulkan_image.h"
 #include "artichoco/renderer/vulkan/vulkan_pass_context.h"
 #include "artichoco/renderer/vulkan/vulkan_pipeline_cache.h"
-#include "passes/common/pass_image_states.h"
+#include "artichoco/renderer/vulkan/vulkan_resource_state.h"
 
 #include <stdexcept>
 #include <utility>
@@ -75,13 +75,12 @@ void ComputeTexturePass::prepare(renderer::vulkan::VulkanPassPrepareContext& con
 
 void ComputeTexturePass::record(renderer::vulkan::VulkanPassContext& context)
 {
-    const auto previous_state = m_impl->output_initialized ? pass_image_states::fragmentSampledRead()
-                                                            : pass_image_states::undefined();
+    const auto previous_state = m_impl->output_initialized
+            ? renderer::vulkan::fragmentSampledReadState()
+            : renderer::vulkan::undefinedImageState();
     context.commands().imageBarrier(renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(),
-        pass_image_states::colorRange(),
-        previous_state,
-        pass_image_states::computeStorageWrite()));
+        m_impl->output->image(), vk::ImageAspectFlagBits::eColor, previous_state,
+        renderer::vulkan::computeStorageWriteState()));
 
     auto& bindings = m_impl->binding_sets.at(context.frame().frameSlotIndex());
     bindings.writeStorageImage("output_texture", *m_impl->output->imageView());
@@ -95,10 +94,9 @@ void ComputeTexturePass::record(renderer::vulkan::VulkanPassContext& context)
         (m_impl->output->extent().height + m_impl->shader->groupSizeY() - 1) / m_impl->shader->groupSizeY());
 
     context.commands().imageBarrier(renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(),
-        pass_image_states::colorRange(),
-        pass_image_states::computeStorageWrite(),
-        pass_image_states::fragmentSampledRead()));
+        m_impl->output->image(), vk::ImageAspectFlagBits::eColor,
+        renderer::vulkan::computeStorageWriteState(),
+        renderer::vulkan::fragmentSampledReadState()));
     m_impl->output_initialized = true;
 }
 

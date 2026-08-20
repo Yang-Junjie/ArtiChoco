@@ -8,9 +8,9 @@
 #include "artichoco/renderer/vulkan/vulkan_pass_context.h"
 #include "artichoco/renderer/vulkan/vulkan_pipeline.h"
 #include "artichoco/renderer/vulkan/vulkan_pipeline_cache.h"
+#include "artichoco/renderer/vulkan/vulkan_resource_state.h"
 #include "artichoco/renderer/vulkan/vulkan_shader.h"
 #include "mrt_composite_pass.h"
-#include "render_pass_common.h"
 
 #include <algorithm>
 #include <array>
@@ -83,8 +83,9 @@ void MrtCompositePass::record(renderer::vulkan::VulkanPassContext& context)
     bindings.writeSampledImage("auxiliary_output", *auxiliary_output.imageView());
     bindings.writeSampler("output_sampler", *m_impl->output_sampler.handle());
 
-    const auto to_color_attachment = renderer::vulkan::makeImageBarrier(
-        frame.colorImage(), colorSubresourceRange(), undefinedImageState(), colorAttachmentWriteState());
+    const auto to_color_attachment = renderer::vulkan::makeImageBarrier(frame.colorImage(),
+        vk::ImageAspectFlagBits::eColor, renderer::vulkan::undefinedImageState(),
+        renderer::vulkan::colorAttachmentWriteState());
     auto& commands = context.commands();
     commands.imageBarrier(to_color_attachment);
 
@@ -106,8 +107,9 @@ void MrtCompositePass::record(renderer::vulkan::VulkanPassContext& context)
     commands.draw(3);
     commands.endRendering();
 
-    const auto to_present = renderer::vulkan::makeImageBarrier(
-        frame.colorImage(), colorSubresourceRange(), colorAttachmentWriteState(), presentState());
+    const auto to_present = renderer::vulkan::makeImageBarrier(frame.colorImage(),
+        vk::ImageAspectFlagBits::eColor, renderer::vulkan::colorAttachmentWriteState(),
+        renderer::vulkan::presentState());
     commands.imageBarrier(to_present);
 }
 

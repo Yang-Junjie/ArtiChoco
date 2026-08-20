@@ -19,52 +19,6 @@
 namespace arti::renderer_showcase {
 namespace {
 
-vk::ImageSubresourceRange colorRange()
-{
-    vk::ImageSubresourceRange range;
-    range.setAspectMask(vk::ImageAspectFlagBits::eColor)
-        .setBaseMipLevel(0)
-        .setLevelCount(1)
-        .setBaseArrayLayer(0)
-        .setLayerCount(1);
-    return range;
-}
-
-vk::ImageSubresourceRange depthRange()
-{
-    vk::ImageSubresourceRange range;
-    range.setAspectMask(vk::ImageAspectFlagBits::eDepth)
-        .setBaseMipLevel(0)
-        .setLevelCount(1)
-        .setBaseArrayLayer(0)
-        .setLayerCount(1);
-    return range;
-}
-
-renderer::vulkan::VulkanImageState undefinedState()
-{
-    return {vk::PipelineStageFlagBits2::eNone, vk::AccessFlagBits2::eNone, vk::ImageLayout::eUndefined};
-}
-
-renderer::vulkan::VulkanImageState colorAttachmentState()
-{
-    return {vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::AccessFlagBits2::eColorAttachmentWrite,
-            vk::ImageLayout::eColorAttachmentOptimal};
-}
-
-renderer::vulkan::VulkanImageState depthAttachmentState()
-{
-    return {vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-            vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-            vk::ImageLayout::eDepthAttachmentOptimal};
-}
-
-renderer::vulkan::VulkanImageState presentState()
-{
-    return {vk::PipelineStageFlagBits2::eNone, vk::AccessFlagBits2::eNone, vk::ImageLayout::ePresentSrcKHR};
-}
-
 vk::IndexType toVulkanIndexType(renderer::IndexType type)
 {
     switch (type) {
@@ -147,11 +101,13 @@ void IndexedGraphicsPass::record(renderer::vulkan::VulkanPassContext& context)
         *m_impl->shader, *m_impl->binding_layout, m_impl->vertex_buffer.layout(), pipeline_info);
 
     auto& commands = context.commands();
-    commands.imageBarrier(renderer::vulkan::makeImageBarrier(
-        frame.colorImage(), colorRange(), undefinedState(), colorAttachmentState()));
+    commands.imageBarrier(renderer::vulkan::makeImageBarrier(frame.colorImage(),
+        vk::ImageAspectFlagBits::eColor, renderer::vulkan::undefinedImageState(),
+        renderer::vulkan::colorAttachmentWriteState()));
     if (m_impl->depth_test_enabled) {
-        commands.imageBarrier(renderer::vulkan::makeImageBarrier(
-            frame.depthImage(), depthRange(), undefinedState(), depthAttachmentState()));
+        commands.imageBarrier(renderer::vulkan::makeImageBarrier(frame.depthImage(),
+            vk::ImageAspectFlagBits::eDepth, renderer::vulkan::undefinedImageState(),
+            renderer::vulkan::depthAttachmentReadWriteState()));
     }
 
     vk::RenderingAttachmentInfo color_attachment;
@@ -186,8 +142,9 @@ void IndexedGraphicsPass::record(renderer::vulkan::VulkanPassContext& context)
     commands.drawIndexed(m_impl->index_buffer.indexCount(), instanceCount());
     commands.endRendering();
 
-    commands.imageBarrier(renderer::vulkan::makeImageBarrier(
-        frame.colorImage(), colorRange(), colorAttachmentState(), presentState()));
+    commands.imageBarrier(renderer::vulkan::makeImageBarrier(frame.colorImage(),
+        vk::ImageAspectFlagBits::eColor, renderer::vulkan::colorAttachmentWriteState(),
+        renderer::vulkan::presentState()));
 }
 
 void IndexedGraphicsPass::prepareResources(renderer::vulkan::VulkanPassPrepareContext&)

@@ -10,8 +10,8 @@
 #include "artichoco/renderer/vulkan/vulkan_pass_context.h"
 #include "artichoco/renderer/vulkan/vulkan_pipeline.h"
 #include "artichoco/renderer/vulkan/vulkan_pipeline_cache.h"
+#include "artichoco/renderer/vulkan/vulkan_resource_state.h"
 #include "artichoco/renderer/vulkan/vulkan_shader.h"
-#include "passes/common/pass_image_states.h"
 
 #include <array>
 #include <cmath>
@@ -97,13 +97,12 @@ void OffscreenPass::record(renderer::vulkan::VulkanPassContext& context)
     const auto& pipeline = context.pipelineCache().getGraphics(
         *m_impl->shader, *m_impl->binding_layout, m_impl->vertex_buffer.layout(), pipeline_info);
 
-    const auto previous_state = m_impl->output_initialized ? pass_image_states::fragmentSampledRead()
-                                                            : pass_image_states::undefined();
+    const auto previous_state = m_impl->output_initialized
+            ? renderer::vulkan::fragmentSampledReadState()
+            : renderer::vulkan::undefinedImageState();
     context.commands().imageBarrier(renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(),
-        pass_image_states::colorRange(),
-        previous_state,
-        pass_image_states::colorAttachmentWrite()));
+        m_impl->output->image(), vk::ImageAspectFlagBits::eColor, previous_state,
+        renderer::vulkan::colorAttachmentWriteState()));
 
     vk::RenderingAttachmentInfo color_attachment;
     color_attachment.setImageView(*m_impl->output->imageView())
@@ -134,10 +133,9 @@ void OffscreenPass::record(renderer::vulkan::VulkanPassContext& context)
     context.commands().endRendering();
 
     context.commands().imageBarrier(renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(),
-        pass_image_states::colorRange(),
-        pass_image_states::colorAttachmentWrite(),
-        pass_image_states::fragmentSampledRead()));
+        m_impl->output->image(), vk::ImageAspectFlagBits::eColor,
+        renderer::vulkan::colorAttachmentWriteState(),
+        renderer::vulkan::fragmentSampledReadState()));
     m_impl->output_initialized = true;
 }
 

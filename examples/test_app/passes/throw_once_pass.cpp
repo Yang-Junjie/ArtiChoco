@@ -2,7 +2,7 @@
 
 #include "artichoco/renderer/vulkan/vulkan_frame_manager.h"
 #include "artichoco/renderer/vulkan/vulkan_pass_context.h"
-#include "render_pass_common.h"
+#include "artichoco/renderer/vulkan/vulkan_resource_state.h"
 
 #include <stdexcept>
 
@@ -16,7 +16,8 @@ void ThrowOncePass::record(renderer::vulkan::VulkanPassContext& context)
 
     auto& frame = context.frame();
     const auto to_color_attachment = renderer::vulkan::makeImageBarrier(
-        frame.colorImage(), colorSubresourceRange(), undefinedImageState(), colorAttachmentWriteState());
+        frame.colorImage(), vk::ImageAspectFlagBits::eColor, renderer::vulkan::undefinedImageState(),
+        renderer::vulkan::colorAttachmentWriteState());
 
     auto& commands = context.commands();
     commands.imageBarrier(to_color_attachment);

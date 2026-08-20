@@ -10,7 +10,7 @@
 #include "artichoco/renderer/vulkan/vulkan_image.h"
 #include "artichoco/renderer/vulkan/vulkan_pass_context.h"
 #include "artichoco/renderer/vulkan/vulkan_pipeline_cache.h"
-#include "render_pass_common.h"
+#include "artichoco/renderer/vulkan/vulkan_resource_state.h"
 
 #include <array>
 #include <stdexcept>
@@ -122,13 +122,16 @@ void TextureComputePass::record(renderer::vulkan::VulkanPassContext& context)
     bindings.writeSampler("source_sampler", *m_impl->input_sampler.handle());
     bindings.writeStorageImage("output_texture", *m_impl->output_level_zero_view);
 
-    const auto previous_state = m_impl->output_initialized ? fragmentSampledReadState() : undefinedImageState();
-    vk::ImageSubresourceRange all_mip_range = colorSubresourceRange();
-    all_mip_range.setLevelCount(m_impl->output->mipLevels());
+    const auto previous_state = m_impl->output_initialized
+            ? renderer::vulkan::fragmentSampledReadState()
+            : renderer::vulkan::undefinedImageState();
+    const vk::ImageSubresourceRange all_mip_range =
+        renderer::vulkan::fullImageRange(vk::ImageAspectFlagBits::eColor, m_impl->output->mipLevels());
     const auto to_transfer = renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(), all_mip_range, previous_state, transferWriteState());
+        m_impl->output->image(), all_mip_range, previous_state, renderer::vulkan::transferWriteState());
     const auto to_compute = renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(), colorSubresourceRange(), transferWriteState(), computeStorageWriteState());
+        m_impl->output->image(), vk::ImageAspectFlagBits::eColor, renderer::vulkan::transferWriteState(),
+        renderer::vulkan::computeStorageWriteState());
 
     auto& commands = context.commands();
     commands.imageBarrier(to_transfer);
@@ -143,12 +146,14 @@ void TextureComputePass::record(renderer::vulkan::VulkanPassContext& context)
                       1);
 
     const auto to_mip_source = renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(), colorSubresourceRange(), computeStorageWriteState(), transferReadState());
+        m_impl->output->image(), vk::ImageAspectFlagBits::eColor,
+        renderer::vulkan::computeStorageWriteState(), renderer::vulkan::transferReadState());
     commands.imageBarrier(to_mip_source);
     commands.generateMipmaps(m_impl->output->image(), extent);
 
     const auto to_graphics = renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(), all_mip_range, transferReadState(), fragmentSampledReadState());
+        m_impl->output->image(), all_mip_range, renderer::vulkan::transferReadState(),
+        renderer::vulkan::fragmentSampledReadState());
     commands.imageBarrier(to_graphics);
     m_impl->output_initialized = true;
 }

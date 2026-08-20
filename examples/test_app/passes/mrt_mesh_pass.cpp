@@ -11,10 +11,10 @@
 #include "artichoco/renderer/vulkan/vulkan_pass_context.h"
 #include "artichoco/renderer/vulkan/vulkan_pipeline.h"
 #include "artichoco/renderer/vulkan/vulkan_pipeline_cache.h"
+#include "artichoco/renderer/vulkan/vulkan_resource_state.h"
 #include "artichoco/renderer/vulkan/vulkan_shader.h"
 #include "artichoco/renderer/vulkan/vulkan_upload_context.h"
 #include "mrt_mesh_pass.h"
-#include "render_pass_common.h"
 
 #include <cstddef>
 
@@ -235,15 +235,21 @@ void MrtMeshPass::record(renderer::vulkan::VulkanPassContext& context)
     bindings.writeSampledImage("base_color_texture", *texture.imageView());
     bindings.writeSampler("base_color_sampler", *m_impl->base_color_sampler.handle());
 
-    const auto previous_output_state = m_impl->outputs_initialized ? fragmentSampledReadState() : undefinedImageState();
-    const auto previous_depth_state =
-        m_impl->depth_initialized ? depthAttachmentReadWriteState() : undefinedImageState();
+    const auto previous_output_state = m_impl->outputs_initialized
+            ? renderer::vulkan::fragmentSampledReadState()
+            : renderer::vulkan::undefinedImageState();
+    const auto previous_depth_state = m_impl->depth_initialized
+            ? renderer::vulkan::depthAttachmentReadWriteState()
+            : renderer::vulkan::undefinedImageState();
     const auto to_color_attachment = renderer::vulkan::makeImageBarrier(
-        m_impl->color_output->image(), colorSubresourceRange(), previous_output_state, colorAttachmentWriteState());
+        m_impl->color_output->image(), vk::ImageAspectFlagBits::eColor, previous_output_state,
+        renderer::vulkan::colorAttachmentWriteState());
     const auto to_auxiliary_attachment = renderer::vulkan::makeImageBarrier(
-        m_impl->auxiliary_output->image(), colorSubresourceRange(), previous_output_state, colorAttachmentWriteState());
+        m_impl->auxiliary_output->image(), vk::ImageAspectFlagBits::eColor, previous_output_state,
+        renderer::vulkan::colorAttachmentWriteState());
     const auto to_depth_attachment = renderer::vulkan::makeImageBarrier(
-        m_impl->depth_buffer->image(), depthSubresourceRange(), previous_depth_state, depthAttachmentReadWriteState());
+        m_impl->depth_buffer->image(), vk::ImageAspectFlagBits::eDepth, previous_depth_state,
+        renderer::vulkan::depthAttachmentReadWriteState());
     const std::array attachment_barriers = {
         to_color_attachment,
         to_auxiliary_attachment,
@@ -312,13 +318,11 @@ void MrtMeshPass::record(renderer::vulkan::VulkanPassContext& context)
     commands.endRendering();
 
     const auto color_to_sample = renderer::vulkan::makeImageBarrier(m_impl->color_output->image(),
-                                                                    colorSubresourceRange(),
-                                                                    colorAttachmentWriteState(),
-                                                                    fragmentSampledReadState());
-    const auto auxiliary_to_sample = renderer::vulkan::makeImageBarrier(m_impl->auxiliary_output->image(),
-                                                                        colorSubresourceRange(),
-                                                                        colorAttachmentWriteState(),
-                                                                        fragmentSampledReadState());
+        vk::ImageAspectFlagBits::eColor, renderer::vulkan::colorAttachmentWriteState(),
+        renderer::vulkan::fragmentSampledReadState());
+    const auto auxiliary_to_sample = renderer::vulkan::makeImageBarrier(
+        m_impl->auxiliary_output->image(), vk::ImageAspectFlagBits::eColor,
+        renderer::vulkan::colorAttachmentWriteState(), renderer::vulkan::fragmentSampledReadState());
     const std::array sample_barriers = {color_to_sample, auxiliary_to_sample};
     commands.pipelineBarrier({}, {}, sample_barriers);
     m_impl->outputs_initialized = true;

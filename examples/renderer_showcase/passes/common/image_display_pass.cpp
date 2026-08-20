@@ -10,9 +10,9 @@
 #include "artichoco/renderer/vulkan/vulkan_pass_context.h"
 #include "artichoco/renderer/vulkan/vulkan_pipeline.h"
 #include "artichoco/renderer/vulkan/vulkan_pipeline_cache.h"
+#include "artichoco/renderer/vulkan/vulkan_resource_state.h"
 #include "artichoco/renderer/vulkan/vulkan_sampler.h"
 #include "artichoco/renderer/vulkan/vulkan_shader.h"
-#include "passes/common/pass_image_states.h"
 #include "passes/common/sampled_image_source.h"
 
 #include <array>
@@ -72,11 +72,9 @@ void ImageDisplayPass::record(renderer::vulkan::VulkanPassContext& context)
     bindings.writeSampledImage("source_image", *m_impl->source->output().imageView());
     bindings.writeSampler("source_sampler", *m_impl->sampler->handle());
 
-    context.commands().imageBarrier(renderer::vulkan::makeImageBarrier(
-        frame.colorImage(),
-        pass_image_states::colorRange(),
-        pass_image_states::undefined(),
-        pass_image_states::colorAttachmentWrite()));
+    context.commands().imageBarrier(renderer::vulkan::makeImageBarrier(frame.colorImage(),
+        vk::ImageAspectFlagBits::eColor, renderer::vulkan::undefinedImageState(),
+        renderer::vulkan::colorAttachmentWriteState()));
 
     vk::RenderingAttachmentInfo color_attachment;
     color_attachment.setImageView(frame.colorImageView())
@@ -96,11 +94,9 @@ void ImageDisplayPass::record(renderer::vulkan::VulkanPassContext& context)
     context.commands().draw(3);
     context.commands().endRendering();
 
-    context.commands().imageBarrier(renderer::vulkan::makeImageBarrier(
-        frame.colorImage(),
-        pass_image_states::colorRange(),
-        pass_image_states::colorAttachmentWrite(),
-        pass_image_states::present()));
+    context.commands().imageBarrier(renderer::vulkan::makeImageBarrier(frame.colorImage(),
+        vk::ImageAspectFlagBits::eColor, renderer::vulkan::colorAttachmentWriteState(),
+        renderer::vulkan::presentState()));
 }
 
 } // namespace arti::renderer_showcase

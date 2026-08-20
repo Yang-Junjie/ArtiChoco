@@ -27,36 +27,6 @@ struct CubemapPushConstants {
     std::array<float, 4> view;
 };
 
-vk::ImageSubresourceRange cubeRange() {
-    vk::ImageSubresourceRange range;
-    range.setAspectMask(vk::ImageAspectFlagBits::eColor)
-            .setBaseMipLevel(0)
-            .setLevelCount(1)
-            .setBaseArrayLayer(0)
-            .setLayerCount(6);
-    return range;
-}
-
-renderer::vulkan::VulkanImageState undefinedState() {
-    return { vk::PipelineStageFlagBits2::eNone, vk::AccessFlagBits2::eNone,
-        vk::ImageLayout::eUndefined };
-}
-
-renderer::vulkan::VulkanImageState colorAttachmentState() {
-    return { vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::AccessFlagBits2::eColorAttachmentWrite, vk::ImageLayout::eColorAttachmentOptimal };
-}
-
-renderer::vulkan::VulkanImageState shaderReadState() {
-    return { vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
-        vk::ImageLayout::eShaderReadOnlyOptimal };
-}
-
-renderer::vulkan::VulkanImageState presentState() {
-    return { vk::PipelineStageFlagBits2::eNone, vk::AccessFlagBits2::eNone,
-        vk::ImageLayout::ePresentSrcKHR };
-}
-
 vk::IndexType toVulkanIndexType(renderer::IndexType type) {
     switch (type) {
         case renderer::IndexType::UInt16:
@@ -152,9 +122,12 @@ void RenderToCubemapPass::record(renderer::vulkan::VulkanPassContext& context) {
             *m_impl->binding_layout, m_impl->vertex_buffer.layout(), pipeline_info);
     auto& commands = context.commands();
 
-    const auto before_state = m_impl->output_initialized ? shaderReadState() : undefinedState();
-    commands.imageBarrier(renderer::vulkan::makeImageBarrier(m_impl->output.image(), cubeRange(),
-            before_state, colorAttachmentState()));
+    const auto before_state = m_impl->output_initialized
+            ? renderer::vulkan::fragmentSampledReadState()
+            : renderer::vulkan::undefinedImageState();
+    commands.imageBarrier(renderer::vulkan::makeImageBarrier(m_impl->output.image(),
+            vk::ImageAspectFlagBits::eColor, before_state,
+            renderer::vulkan::colorAttachmentWriteState(), 1, 6));
 
     constexpr std::array<std::array<float, 4>, 6> clear_colors = { {
         { 4.0f, 0.12f, 0.08f, 1.0f },
@@ -178,18 +151,14 @@ void RenderToCubemapPass::record(renderer::vulkan::VulkanPassContext& context) {
         commands.beginRendering(rendering_info);
         commands.endRendering();
     }
-    commands.imageBarrier(renderer::vulkan::makeImageBarrier(m_impl->output.image(), cubeRange(),
-            colorAttachmentState(), shaderReadState()));
+    commands.imageBarrier(renderer::vulkan::makeImageBarrier(m_impl->output.image(),
+            vk::ImageAspectFlagBits::eColor, renderer::vulkan::colorAttachmentWriteState(),
+            renderer::vulkan::fragmentSampledReadState(), 1, 6));
     m_impl->output_initialized = true;
 
-    vk::ImageSubresourceRange swapchain_range;
-    swapchain_range.setAspectMask(vk::ImageAspectFlagBits::eColor)
-            .setBaseMipLevel(0)
-            .setLevelCount(1)
-            .setBaseArrayLayer(0)
-            .setLayerCount(1);
-    commands.imageBarrier(renderer::vulkan::makeImageBarrier(frame.colorImage(), swapchain_range,
-            undefinedState(), colorAttachmentState()));
+    commands.imageBarrier(renderer::vulkan::makeImageBarrier(frame.colorImage(),
+            vk::ImageAspectFlagBits::eColor, renderer::vulkan::undefinedImageState(),
+            renderer::vulkan::colorAttachmentWriteState()));
 
     constexpr std::array<float, 4> swapchain_clear = { 0.01f, 0.02f, 0.03f, 1.0f };
     vk::RenderingAttachmentInfo color_attachment;
@@ -218,8 +187,9 @@ void RenderToCubemapPass::record(renderer::vulkan::VulkanPassContext& context) {
             toVulkanIndexType(m_impl->index_buffer.indexType()));
     commands.drawIndexed(m_impl->index_buffer.indexCount());
     commands.endRendering();
-    commands.imageBarrier(renderer::vulkan::makeImageBarrier(frame.colorImage(), swapchain_range,
-            colorAttachmentState(), presentState()));
+    commands.imageBarrier(renderer::vulkan::makeImageBarrier(frame.colorImage(),
+            vk::ImageAspectFlagBits::eColor, renderer::vulkan::colorAttachmentWriteState(),
+            renderer::vulkan::presentState()));
 }
 
 } // namespace arti::renderer_showcase

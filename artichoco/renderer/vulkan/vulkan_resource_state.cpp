@@ -2,6 +2,75 @@
 
 namespace arti::renderer::vulkan {
 
+vk::ImageSubresourceRange fullImageRange(vk::ImageAspectFlags aspect,
+                                         uint32_t mip_levels,
+                                         uint32_t array_layers) noexcept
+{
+    vk::ImageSubresourceRange range{};
+    range.setAspectMask(aspect)
+        .setBaseMipLevel(0)
+        .setLevelCount(mip_levels)
+        .setBaseArrayLayer(0)
+        .setLayerCount(array_layers);
+    return range;
+}
+
+VulkanImageState undefinedImageState() noexcept
+{
+    return {vk::PipelineStageFlagBits2::eNone,
+            vk::AccessFlagBits2::eNone,
+            vk::ImageLayout::eUndefined};
+}
+
+VulkanImageState colorAttachmentWriteState() noexcept
+{
+    return {vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::AccessFlagBits2::eColorAttachmentWrite,
+            vk::ImageLayout::eColorAttachmentOptimal};
+}
+
+VulkanImageState depthAttachmentReadWriteState() noexcept
+{
+    return {vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+            vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+            vk::ImageLayout::eDepthAttachmentOptimal};
+}
+
+VulkanImageState computeStorageWriteState() noexcept
+{
+    return {vk::PipelineStageFlagBits2::eComputeShader,
+            vk::AccessFlagBits2::eShaderStorageWrite,
+            vk::ImageLayout::eGeneral};
+}
+
+VulkanImageState transferReadState() noexcept
+{
+    return {vk::PipelineStageFlagBits2::eCopy,
+            vk::AccessFlagBits2::eTransferRead,
+            vk::ImageLayout::eTransferSrcOptimal};
+}
+
+VulkanImageState transferWriteState() noexcept
+{
+    return {vk::PipelineStageFlagBits2::eCopy,
+            vk::AccessFlagBits2::eTransferWrite,
+            vk::ImageLayout::eTransferDstOptimal};
+}
+
+VulkanImageState fragmentSampledReadState() noexcept
+{
+    return {vk::PipelineStageFlagBits2::eFragmentShader,
+            vk::AccessFlagBits2::eShaderSampledRead,
+            vk::ImageLayout::eShaderReadOnlyOptimal};
+}
+
+VulkanImageState presentState() noexcept
+{
+    return {vk::PipelineStageFlagBits2::eNone,
+            vk::AccessFlagBits2::eNone,
+            vk::ImageLayout::ePresentSrcKHR};
+}
+
 vk::BufferMemoryBarrier2 makeBufferBarrier(vk::Buffer buffer,
                                            vk::DeviceSize offset,
                                            vk::DeviceSize size,
@@ -38,6 +107,16 @@ vk::ImageMemoryBarrier2 makeImageBarrier(vk::Image image,
         .setImage(image)
         .setSubresourceRange(range);
     return barrier;
+}
+
+vk::ImageMemoryBarrier2 makeImageBarrier(vk::Image image,
+                                         vk::ImageAspectFlags aspect,
+                                         VulkanImageState before,
+                                         VulkanImageState after,
+                                         uint32_t mip_levels,
+                                         uint32_t array_layers) noexcept
+{
+    return makeImageBarrier(image, fullImageRange(aspect, mip_levels, array_layers), before, after);
 }
 
 } // namespace arti::renderer::vulkan
