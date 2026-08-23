@@ -92,10 +92,18 @@ nvrhi::VulkanBindingOffsets zeroVulkanBindingOffsets()
 }
 
 std::vector<nvrhi::BindingLayoutHandle> createBindingLayouts(
-        nvrhi::IDevice& device, const ShaderReflection& reflection)
+        nvrhi::IDevice& device, const ShaderReflection& reflection, uint32_t bindless_capacity)
 {
     std::map<uint32_t, LayoutBuildState> states;
+    std::map<uint32_t, ReflectedShaderBinding> unbounded_bindings;
     for (const auto& binding : reflection.bindings) {
+        if (binding.unbounded) {
+            if (!unbounded_bindings.emplace(binding.set, binding).second) {
+                throw std::invalid_argument(
+                        "A bindless descriptor set may contain only one unbounded binding.");
+            }
+            continue;
+        }
         auto& state = states[binding.set];
         if (state.desc.visibility == nvrhi::ShaderType::None) {
             state.desc.setVisibility(toNvrhiShaderType(binding.stages));
@@ -134,15 +142,43 @@ std::vector<nvrhi::BindingLayoutHandle> createBindingLayouts(
     }
 
     if (states.empty()) {
-        return {};
+        if (unbounded_bindings.empty()) {
+            return {};
+        }
     }
 
-    const uint32_t maximum_set = states.rbegin()->first;
+    const uint32_t maximum_set = std::max(
+            states.empty() ? 0u : states.rbegin()->first,
+            unbounded_bindings.empty() ? 0u : unbounded_bindings.rbegin()->first);
     std::vector<nvrhi::BindingLayoutHandle> layouts(static_cast<size_t>(maximum_set) + 1);
     for (auto& [set, state] : states) {
+        if (unbounded_bindings.contains(set)) {
+            throw std::invalid_argument(
+                    "An unbounded binding must occupy its own descriptor set.");
+        }
         layouts[set] = device.createBindingLayout(state.desc);
         if (layouts[set].Get() == nullptr) {
             throw std::runtime_error("NVRHI failed to create a reflected binding layout.");
+        }
+    }
+    for (const auto& [set, binding] : unbounded_bindings) {
+        if (binding.type != ShaderResourceType::SampledImage || binding.binding != 0) {
+            throw std::invalid_argument(
+                    "NVRHI bindless reflection requires one sampled-image binding at slot zero.");
+        }
+        if (bindless_capacity == 0) {
+            throw std::invalid_argument(
+                    "A non-zero bindless capacity is required for an unbounded texture array.");
+        }
+        nvrhi::BindlessLayoutDesc bindless_desc;
+        bindless_desc.setVisibility(toNvrhiShaderType(binding.stages))
+                .setFirstSlot(0)
+                .setMaxCapacity(bindless_capacity)
+                .setLayoutType(nvrhi::BindlessLayoutDesc::LayoutType::Immutable)
+                .addRegisterSpace(nvrhi::BindingLayoutItem::Texture_SRV(0));
+        layouts[set] = device.createBindlessLayout(bindless_desc);
+        if (layouts[set].Get() == nullptr) {
+            throw std::runtime_error("NVRHI failed to create a bindless layout.");
         }
     }
     return layouts;
@@ -284,21 +320,23 @@ NvrhiBindingResource NvrhiBindingResource::Sampler(
 }
 
 NvrhiGraphicsShaderSet createNvrhiGraphicsShaderSet(nvrhi::IDevice& device,
-        const CompiledGraphicsProgram& program, std::string_view debug_name)
+        const CompiledGraphicsProgram& program, std::string_view debug_name,
+        uint32_t bindless_capacity)
 {
     NvrhiGraphicsShaderSet result;
     result.vertex_shader = createShader(device, program.vertex, nvrhi::ShaderType::Vertex, debug_name);
     result.pixel_shader = createShader(device, program.fragment, nvrhi::ShaderType::Pixel, debug_name);
-    result.binding_layouts = createBindingLayouts(device, program.reflection);
+    result.binding_layouts = createBindingLayouts(device, program.reflection, bindless_capacity);
     return result;
 }
 
 NvrhiComputeShaderSet createNvrhiComputeShaderSet(nvrhi::IDevice& device,
-        const CompiledComputeProgram& program, std::string_view debug_name)
+        const CompiledComputeProgram& program, std::string_view debug_name,
+        uint32_t bindless_capacity)
 {
     NvrhiComputeShaderSet result;
     result.compute_shader = createShader(device, program.compute, nvrhi::ShaderType::Compute, debug_name);
-    result.binding_layouts = createBindingLayouts(device, program.reflection);
+    result.binding_layouts = createBindingLayouts(device, program.reflection, bindless_capacity);
     return result;
 }
 
@@ -312,6 +350,10 @@ nvrhi::BindingSetHandle createNvrhiBindingSet(nvrhi::IDevice& device,
     for (const ReflectedShaderBinding& binding : reflection.bindings) {
         if (binding.set != descriptor_set) {
             continue;
+        }
+        if (binding.unbounded) {
+            throw std::invalid_argument(
+                    "Unbounded bindings require an NVRHI descriptor table, not a binding set.");
         }
         for (uint32_t array_element = 0; array_element < binding.count; ++array_element) {
             size_t match = resources.size();

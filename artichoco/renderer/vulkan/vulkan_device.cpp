@@ -162,8 +162,21 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
     synchronization2.setSynchronization2(true);
     vk::PhysicalDeviceDynamicRenderingFeatures dynamic_rendering{};
     dynamic_rendering.setDynamicRendering(true).setPNext(&synchronization2);
+    const auto supported_features =
+            m_physical_device.getFeatures2<vk::PhysicalDeviceFeatures2,
+                    vk::PhysicalDeviceVulkan12Features>();
+    const auto& supported_vulkan_12 =
+            supported_features.get<vk::PhysicalDeviceVulkan12Features>();
+    m_descriptor_indexing_enabled =
+            supported_vulkan_12.shaderSampledImageArrayNonUniformIndexing &&
+            supported_vulkan_12.descriptorBindingPartiallyBound &&
+            supported_vulkan_12.runtimeDescriptorArray;
     vk::PhysicalDeviceVulkan12Features vulkan_12_features{};
-    vulkan_12_features.setTimelineSemaphore(true).setPNext(&dynamic_rendering);
+    vulkan_12_features.setTimelineSemaphore(true)
+            .setShaderSampledImageArrayNonUniformIndexing(m_descriptor_indexing_enabled)
+            .setDescriptorBindingPartiallyBound(m_descriptor_indexing_enabled)
+            .setRuntimeDescriptorArray(m_descriptor_indexing_enabled)
+            .setPNext(&dynamic_rendering);
     vk::PhysicalDeviceVulkan11Features vulkan_11_features{};
     vulkan_11_features.setShaderDrawParameters(true).setPNext(&vulkan_12_features);
     vk::PhysicalDeviceFeatures enabled_features{};
@@ -244,6 +257,11 @@ bool VulkanDevice::independentBlendEnabled() const noexcept
 bool VulkanDevice::samplerAnisotropyEnabled() const noexcept
 {
     return m_sampler_anisotropy_enabled;
+}
+
+bool VulkanDevice::descriptorIndexingEnabled() const noexcept
+{
+    return m_descriptor_indexing_enabled;
 }
 
 } // namespace arti::renderer::vulkan

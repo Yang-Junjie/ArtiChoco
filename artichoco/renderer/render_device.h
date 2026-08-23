@@ -58,6 +58,7 @@ public:
     bool renderNvrhiClearFrame(const std::array<float, 4>& clear_color);
     bool nvrhiComputeShaderSmoke(const std::filesystem::path& source_path);
     bool nvrhiResourceSmoke();
+    bool supportsBindlessTextures() const noexcept;
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
 

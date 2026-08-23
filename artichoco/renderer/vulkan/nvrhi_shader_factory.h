@@ -50,10 +50,12 @@ struct NvrhiBindingResource {
 };
 
 NvrhiGraphicsShaderSet createNvrhiGraphicsShaderSet(nvrhi::IDevice& device,
-        const CompiledGraphicsProgram& program, std::string_view debug_name = {});
+        const CompiledGraphicsProgram& program, std::string_view debug_name = {},
+        uint32_t bindless_capacity = 0);
 
 NvrhiComputeShaderSet createNvrhiComputeShaderSet(nvrhi::IDevice& device,
-        const CompiledComputeProgram& program, std::string_view debug_name = {});
+        const CompiledComputeProgram& program, std::string_view debug_name = {},
+        uint32_t bindless_capacity = 0);
 
 nvrhi::BindingSetHandle createNvrhiBindingSet(nvrhi::IDevice& device,
         const ShaderReflection& reflection, uint32_t descriptor_set,

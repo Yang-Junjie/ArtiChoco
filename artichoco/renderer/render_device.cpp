@@ -54,6 +54,7 @@ struct RenderDevice::Impl final : detail::ResourceOwner,
     bool renderNvrhiClearFrame(const std::array<float, 4>& clear_color);
     bool nvrhiComputeShaderSmoke(const std::filesystem::path& source_path);
     bool nvrhiResourceSmoke();
+    bool supportsBindlessTextures() const noexcept;
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
 
@@ -275,6 +276,11 @@ bool RenderDevice::Impl::nvrhiResourceSmoke()
     return vulkan::runNvrhiResourceSmoke(m_nvrhi_device);
 }
 
+bool RenderDevice::Impl::supportsBindlessTextures() const noexcept
+{
+    return m_device.descriptorIndexingEnabled();
+}
+
 #pragma endregion RenderDeviceFrame
 void RenderDevice::Impl::requestSwapchainRecreation() noexcept {
     m_frame_manager.requestSwapchainRecreation();
@@ -333,6 +339,11 @@ bool RenderDevice::nvrhiComputeShaderSmoke(const std::filesystem::path& source_p
 bool RenderDevice::nvrhiResourceSmoke()
 {
     return m_impl->nvrhiResourceSmoke();
+}
+
+bool RenderDevice::supportsBindlessTextures() const noexcept
+{
+    return m_impl->supportsBindlessTextures();
 }
 
 void RenderDevice::requestSwapchainRecreation() noexcept { m_impl->requestSwapchainRecreation(); }

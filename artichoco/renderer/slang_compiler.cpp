@@ -124,19 +124,20 @@ ShaderReflection reflectProgram(slang::ProgramLayout& layout, ShaderStageMask st
                     type_layout->getBindingRangeLeafTypeLayout(range_index);
 
             const SlangInt reflected_count = type_layout->getBindingRangeBindingCount(range_index);
-            if (reflected_count <= 0 ||
-                    static_cast<size_t>(reflected_count) == SLANG_UNBOUNDED_SIZE ||
-                    static_cast<size_t>(reflected_count) == SLANG_UNKNOWN_SIZE ||
-                    static_cast<uint64_t>(reflected_count) > std::numeric_limits<uint32_t>::max()) {
-                throw std::runtime_error(
-                        "Unbounded or unresolved descriptor arrays are not enabled yet.");
+            const size_t reflected_size = static_cast<size_t>(reflected_count);
+            const bool unbounded = reflected_size == SLANG_UNBOUNDED_SIZE;
+            if ((!unbounded && reflected_count <= 0) || reflected_size == SLANG_UNKNOWN_SIZE ||
+                    (!unbounded && static_cast<uint64_t>(reflected_count) >
+                            std::numeric_limits<uint32_t>::max())) {
+                throw std::runtime_error("Slang reflected an invalid descriptor array size.");
             }
             reflection.bindings.push_back({
                 parameter->getName(),
                 reflectResourceType(binding_type, leaf_type_layout),
                 parameter->getBindingSpace(),
                 parameter->getBindingIndex(),
-                static_cast<uint32_t>(reflected_count),
+                unbounded ? 0u : static_cast<uint32_t>(reflected_count),
+                unbounded,
                 stages,
             });
         }
@@ -146,8 +147,14 @@ ShaderReflection reflectProgram(slang::ProgramLayout& layout, ShaderStageMask st
 
 void logReflection(const ShaderReflection& reflection) {
     for (const auto& binding: reflection.bindings) {
-        getLogChannel().debug("Reflected shader resource '{}' at set {}, binding {} (count {})",
-                binding.name, binding.set, binding.binding, binding.count);
+        if (binding.unbounded) {
+            getLogChannel().debug(
+                    "Reflected shader resource '{}' at set {}, binding {} (unbounded)",
+                    binding.name, binding.set, binding.binding);
+        } else {
+            getLogChannel().debug("Reflected shader resource '{}' at set {}, binding {} (count {})",
+                    binding.name, binding.set, binding.binding, binding.count);
+        }
     }
     for (const auto& range: reflection.push_constants) {
         getLogChannel().debug("Reflected push constants (offset {}, size {})", range.offset,

@@ -47,6 +47,7 @@ struct ReflectedShaderBinding {
     uint32_t set{0};
     uint32_t binding{0};
     uint32_t count{1};
+    bool unbounded{false};
     ShaderStageMask stages{ShaderStageMask::None};
 };
 

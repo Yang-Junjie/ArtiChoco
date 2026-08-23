@@ -26,6 +26,7 @@ public:
     bool mutableSwapchainFormatEnabled() const noexcept;
     bool independentBlendEnabled() const noexcept;
     bool samplerAnisotropyEnabled() const noexcept;
+    bool descriptorIndexingEnabled() const noexcept;
 
 private:
     vk::raii::PhysicalDevice m_physical_device{nullptr};
@@ -39,6 +40,7 @@ private:
     bool m_mutable_swapchain_format_enabled{false};
     bool m_independent_blend_enabled{false};
     bool m_sampler_anisotropy_enabled{false};
+    bool m_descriptor_indexing_enabled{false};
 };
 
 } // namespace arti::renderer::vulkan
