@@ -2,89 +2,34 @@
 
 #include "artichoco/renderer/slang_compiler.h"
 #include "artichoco/renderer/texture_2d.h"
-#include "artichoco/renderer/vulkan/vulkan_binding_layout.h"
-#include "artichoco/renderer/vulkan/vulkan_binding_set.h"
-#include "artichoco/renderer/vulkan/vulkan_compute_pipeline.h"
-#include "artichoco/renderer/vulkan/vulkan_compute_shader.h"
-#include "artichoco/renderer/vulkan/vulkan_frame_manager.h"
-#include "artichoco/renderer/vulkan/vulkan_image.h"
-#include "artichoco/renderer/vulkan/vulkan_pass_context.h"
-#include "artichoco/renderer/vulkan/vulkan_pipeline_cache.h"
-#include "artichoco/renderer/vulkan/vulkan_resource_state.h"
+#include "artichoco/renderer/vulkan/nvrhi_shader_factory.h"
 
 #include <array>
 #include <stdexcept>
 #include <utility>
-#include <vector>
 
 namespace arti::test_app {
 
 struct TextureComputePass::Impl {
     Impl(std::shared_ptr<renderer::Texture2D> source, std::filesystem::path shader_path)
-        : source(std::move(source)),
-          shader_path(std::move(shader_path))
+        : source(std::move(source)), shader_path(std::move(shader_path))
     {}
-
-    void initialize(renderer::vulkan::VulkanPassPrepareContext& context)
-    {
-        if (pipeline) {
-            return;
-        }
-
-        auto program = renderer::SlangCompiler::compileCompute({shader_path});
-        binding_layout = std::make_unique<renderer::vulkan::VulkanBindingLayout>(context.device(), program.reflection);
-        shader = std::make_unique<renderer::vulkan::VulkanComputeShader>(context.device(), std::move(program));
-        pipeline = &context.pipelineCache().getCompute(*shader, *binding_layout);
-        if (binding_layout->pushConstantRanges().empty()) {
-            throw std::invalid_argument("The texture compute shader requires push constants.");
-        }
-
-        binding_sets.reserve(context.frameSlotCount());
-        for (size_t index = 0; index < context.frameSlotCount(); ++index) {
-            binding_sets.emplace_back(context.device(), context.descriptorAllocator(), *binding_layout);
-        }
-        input_sampler = renderer::vulkan::VulkanSampler{context.device()};
-    }
-
-    void ensureOutput(renderer::vulkan::VulkanPassPrepareContext& context)
-    {
-        if (!source) {
-            return;
-        }
-        const vk::Extent2D required_extent{source->width(), source->height()};
-        if (output && output->extent() == required_extent) {
-            return;
-        }
-        if (output) {
-            context.device().device().waitIdle();
-        }
-
-        renderer::vulkan::VulkanImageCreateInfo image_info;
-        image_info.extent = required_extent;
-        image_info.format = vk::Format::eR8G8B8A8Unorm;
-        image_info.usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
-                           vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst;
-        image_info.mip_levels = renderer::vulkan::imageMipLevelCount(required_extent);
-        output = std::make_unique<renderer::vulkan::VulkanImage>(context.device(), context.allocator(), image_info);
-        output_level_zero_view = output->createLayerView(context.device(), 0, 0);
-        output_initialized = false;
-    }
 
     std::shared_ptr<renderer::Texture2D> source;
     std::filesystem::path shader_path;
-    std::unique_ptr<renderer::vulkan::VulkanComputeShader> shader;
-    std::unique_ptr<renderer::vulkan::VulkanBindingLayout> binding_layout;
-    const renderer::vulkan::VulkanComputePipeline* pipeline{nullptr};
-    renderer::vulkan::VulkanSampler input_sampler;
-    std::unique_ptr<renderer::vulkan::VulkanImage> output;
-    vk::raii::ImageView output_level_zero_view{nullptr};
-    std::vector<renderer::vulkan::VulkanBindingSet> binding_sets;
+    renderer::ShaderReflection reflection;
+    nvrhi::ShaderHandle shader;
+    nvrhi::BindingLayoutHandle binding_layout;
+    nvrhi::ComputePipelineHandle pipeline;
+    nvrhi::SamplerHandle sampler;
+    nvrhi::TextureHandle output;
+    uint32_t group_size_x{1};
+    uint32_t group_size_y{1};
     float time{0.0f};
-    bool output_initialized{false};
 };
 
 TextureComputePass::TextureComputePass(std::shared_ptr<renderer::Texture2D> source,
-                                       const std::filesystem::path& shader_path)
+        const std::filesystem::path& shader_path)
     : m_impl(std::make_unique<Impl>(std::move(source), shader_path))
 {}
 
@@ -96,66 +41,92 @@ void TextureComputePass::applyFrameData(const RenderFrameData& frame_data)
     m_impl->time = frame_data.time;
 }
 
-const renderer::vulkan::VulkanImage& TextureComputePass::output() const
+void TextureComputePass::prepare(renderer::RenderPassPrepareContext& context)
 {
-    if (!m_impl->output) {
-        throw std::logic_error("TextureComputePass must be prepared before its output is used.");
+    if (!m_impl->source) {
+        throw std::logic_error("TextureComputePass requires a source texture.");
     }
-    return *m_impl->output;
+    if (!m_impl->pipeline) {
+        const renderer::CompiledComputeProgram program =
+                renderer::SlangCompiler::compileCompute({m_impl->shader_path});
+        const auto shaders = renderer::vulkan::createNvrhiComputeShaderSet(
+                context.device(), program, "ArtiChoco NVRHI texture compute");
+        if (shaders.binding_layouts.empty() || !shaders.binding_layouts.front()) {
+            throw std::runtime_error("TextureComputePass shader has no NVRHI binding layout.");
+        }
+
+        m_impl->shader = shaders.compute_shader;
+        m_impl->binding_layout = shaders.binding_layouts.front();
+        m_impl->reflection = program.reflection;
+        m_impl->group_size_x = program.thread_group_size_x;
+        m_impl->group_size_y = program.thread_group_size_y;
+
+        nvrhi::ComputePipelineDesc pipeline_desc;
+        pipeline_desc.setComputeShader(m_impl->shader);
+        for (const nvrhi::BindingLayoutHandle& layout : shaders.binding_layouts) {
+            if (layout) {
+                pipeline_desc.addBindingLayout(layout);
+            }
+        }
+        m_impl->pipeline = context.device().createComputePipeline(pipeline_desc);
+        m_impl->sampler = context.device().createSampler(nvrhi::SamplerDesc{});
+        if (!m_impl->pipeline || !m_impl->sampler) {
+            throw std::runtime_error("NVRHI failed to create TextureComputePass resources.");
+        }
+    }
+
+    const bool size_changed = !m_impl->output ||
+            m_impl->output->getDesc().width != m_impl->source->width() ||
+            m_impl->output->getDesc().height != m_impl->source->height();
+    if (size_changed) {
+        nvrhi::TextureDesc output_desc;
+        output_desc.setWidth(m_impl->source->width())
+                .setHeight(m_impl->source->height())
+                .setFormat(nvrhi::Format::RGBA8_UNORM)
+                .setIsUAV(true)
+                .setDebugName("ArtiChoco NVRHI texture compute output")
+                .enableAutomaticStateTracking(nvrhi::ResourceStates::UnorderedAccess);
+        m_impl->output = context.device().createTexture(output_desc);
+        if (!m_impl->output) {
+            throw std::runtime_error("NVRHI failed to create TextureComputePass output.");
+        }
+    }
 }
 
-void TextureComputePass::prepare(renderer::vulkan::VulkanPassPrepareContext& context)
+void TextureComputePass::record(renderer::RenderPassContext& context)
 {
-    m_impl->initialize(context);
-    m_impl->ensureOutput(context);
-}
-
-void TextureComputePass::record(renderer::vulkan::VulkanPassContext& context)
-{
-    if (!m_impl->source || !m_impl->output) {
+    if (!m_impl->source || !m_impl->output || !m_impl->pipeline) {
         return;
     }
-    auto& frame = context.frame();
-    const auto& source_image = context.image(*m_impl->source);
-    auto& bindings = m_impl->binding_sets.at(frame.frameSlotIndex());
-    bindings.writeSampledImage("source_texture", *source_image.imageView());
-    bindings.writeSampler("source_sampler", *m_impl->input_sampler.handle());
-    bindings.writeStorageImage("output_texture", *m_impl->output_level_zero_view);
 
-    const auto previous_state = m_impl->output_initialized
-            ? renderer::vulkan::fragmentSampledReadState()
-            : renderer::vulkan::undefinedImageState();
-    const vk::ImageSubresourceRange all_mip_range =
-        renderer::vulkan::fullImageRange(vk::ImageAspectFlagBits::eColor, m_impl->output->mipLevels());
-    const auto to_transfer = renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(), all_mip_range, previous_state, renderer::vulkan::transferWriteState());
-    const auto to_compute = renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(), vk::ImageAspectFlagBits::eColor, renderer::vulkan::transferWriteState(),
-        renderer::vulkan::computeStorageWriteState());
+    const std::array resources = {
+            renderer::vulkan::NvrhiBindingResource::Texture(
+                    "source_texture", context.texture(*m_impl->source)),
+            renderer::vulkan::NvrhiBindingResource::Sampler(
+                    "source_sampler", *m_impl->sampler),
+            renderer::vulkan::NvrhiBindingResource::Texture(
+                    "output_texture", *m_impl->output),
+    };
+    const nvrhi::BindingSetHandle binding_set = renderer::vulkan::createNvrhiBindingSet(
+            context.device(), m_impl->reflection, 0, *m_impl->binding_layout, resources);
 
+    nvrhi::ComputeState state;
+    state.setPipeline(m_impl->pipeline).addBindingSet(binding_set);
     auto& commands = context.commands();
-    commands.imageBarrier(to_transfer);
-    commands.imageBarrier(to_compute);
-    commands.bindPipeline(*m_impl->pipeline);
-    commands.bindBindingSet(*m_impl->pipeline, bindings);
-    commands.pushConstants(
-        *m_impl->pipeline->layout(), m_impl->binding_layout->pushConstantRanges().front().stageFlags, 0, m_impl->time);
-    const vk::Extent2D extent = m_impl->output->extent();
-    commands.dispatch((extent.width + m_impl->shader->groupSizeX() - 1) / m_impl->shader->groupSizeX(),
-                      (extent.height + m_impl->shader->groupSizeY() - 1) / m_impl->shader->groupSizeY(),
-                      1);
+    commands.setComputeState(state);
+    commands.setPushConstants(&m_impl->time, sizeof(m_impl->time));
+    commands.dispatch(
+            (m_impl->source->width() + m_impl->group_size_x - 1) / m_impl->group_size_x,
+            (m_impl->source->height() + m_impl->group_size_y - 1) / m_impl->group_size_y,
+            1);
+}
 
-    const auto to_mip_source = renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(), vk::ImageAspectFlagBits::eColor,
-        renderer::vulkan::computeStorageWriteState(), renderer::vulkan::transferReadState());
-    commands.imageBarrier(to_mip_source);
-    commands.generateMipmaps(m_impl->output->image(), extent);
-
-    const auto to_graphics = renderer::vulkan::makeImageBarrier(
-        m_impl->output->image(), all_mip_range, renderer::vulkan::transferReadState(),
-        renderer::vulkan::fragmentSampledReadState());
-    commands.imageBarrier(to_graphics);
-    m_impl->output_initialized = true;
+nvrhi::ITexture& TextureComputePass::output() const
+{
+    if (!m_impl->output) {
+        throw std::logic_error("TextureComputePass output is not initialized.");
+    }
+    return *m_impl->output;
 }
 
 } // namespace arti::test_app

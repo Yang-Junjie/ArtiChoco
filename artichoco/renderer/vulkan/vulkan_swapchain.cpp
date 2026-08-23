@@ -1,6 +1,7 @@
 #include "vulkan_swapchain.h"
 
 #include "artichoco/renderer/renderer_log.h"
+#include "nvrhi_vulkan_device.h"
 
 #include <algorithm>
 #include <array>
@@ -96,11 +97,29 @@ vk::CompositeAlphaFlagBitsKHR chooseCompositeAlpha(vk::CompositeAlphaFlagsKHR su
     throw std::runtime_error("The Vulkan surface exposes no supported composite alpha mode.");
 }
 
+nvrhi::Format toNvrhiFormat(vk::Format format)
+{
+    switch (format) {
+        case vk::Format::eR8G8B8A8Unorm:
+            return nvrhi::Format::RGBA8_UNORM;
+        case vk::Format::eR8G8B8A8Srgb:
+            return nvrhi::Format::SRGBA8_UNORM;
+        case vk::Format::eB8G8R8A8Unorm:
+            return nvrhi::Format::BGRA8_UNORM;
+        case vk::Format::eB8G8R8A8Srgb:
+            return nvrhi::Format::SBGRA8_UNORM;
+        default:
+            throw std::runtime_error("The Vulkan swapchain format cannot be represented by NVRHI.");
+    }
+}
+
 } // namespace
 
-VulkanSwapchain::VulkanSwapchain(core::Window& window, const VulkanDevice& device, const VulkanSurface& surface)
+VulkanSwapchain::VulkanSwapchain(core::Window& window, const VulkanDevice& device,
+        NvrhiVulkanDevice& nvrhi_device, const VulkanSurface& surface)
     : m_window(window),
       m_device(device),
+      m_nvrhi_device(nvrhi_device),
       m_surface(surface)
 {
     recreate();
@@ -119,8 +138,11 @@ bool VulkanSwapchain::recreate()
     if (formats.empty() || present_modes.empty()) {
         throw std::runtime_error("The Vulkan surface has no usable formats or present modes.");
     }
-    if (!(capabilities.supportedUsageFlags & vk::ImageUsageFlagBits::eColorAttachment)) {
-        throw std::runtime_error("The Vulkan surface does not support color attachment images.");
+    constexpr vk::ImageUsageFlags required_usage =
+            vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
+    if ((capabilities.supportedUsageFlags & required_usage) != required_usage) {
+        throw std::runtime_error(
+                "The Vulkan surface does not support color attachment and transfer-destination images.");
     }
 
     const auto swapchain_format = chooseSurfaceFormat(formats, m_device);
@@ -147,7 +169,7 @@ bool VulkanSwapchain::recreate()
         .setImageColorSpace(surface_format.colorSpace)
         .setImageExtent(extent)
         .setImageArrayLayers(1)
-        .setImageUsage(vk::ImageUsageFlagBits::eColorAttachment)
+        .setImageUsage(required_usage)
         .setPreTransform(capabilities.currentTransform)
         .setCompositeAlpha(chooseCompositeAlpha(capabilities.supportedCompositeAlpha))
         .setPresentMode(present_mode)
@@ -192,6 +214,8 @@ bool VulkanSwapchain::recreate()
         new_image_views.emplace_back(m_device.device(), view_info);
     }
 
+    m_nvrhi_framebuffers.clear();
+    m_nvrhi_textures.clear();
     m_image_views.clear();
     m_images.clear();
     m_swapchain = std::move(new_swapchain);
@@ -200,6 +224,35 @@ bool VulkanSwapchain::recreate()
     m_format = swapchain_format.view;
     m_extent = extent;
     m_min_image_count = capabilities.minImageCount;
+
+    nvrhi::TextureDesc texture_desc = nvrhi::TextureDesc()
+        .setWidth(m_extent.width)
+        .setHeight(m_extent.height)
+        .setDimension(nvrhi::TextureDimension::Texture2D)
+        .setFormat(toNvrhiFormat(m_format))
+        .setIsRenderTarget(true)
+        .setDebugName("ArtiChoco Swapchain Image")
+        .enableAutomaticStateTracking(nvrhi::ResourceStates::Present);
+    texture_desc.isShaderResource = false;
+    m_nvrhi_textures.reserve(m_images.size());
+    m_nvrhi_framebuffers.reserve(m_images.size());
+    for (const vk::Image image : m_images) {
+        const VkImage native_image = static_cast<VkImage>(image);
+        nvrhi::TextureHandle texture = m_nvrhi_device.device().createHandleForNativeTexture(
+                nvrhi::ObjectTypes::VK_Image, nvrhi::Object{static_cast<void*>(native_image)},
+                texture_desc);
+        if (texture.Get() == nullptr) {
+            throw std::runtime_error("Failed to wrap a Vulkan swapchain image with NVRHI.");
+        }
+
+        nvrhi::FramebufferHandle framebuffer = m_nvrhi_device.device().createFramebuffer(
+                nvrhi::FramebufferDesc().addColorAttachment(texture.Get()));
+        if (framebuffer.Get() == nullptr) {
+            throw std::runtime_error("Failed to create an NVRHI swapchain framebuffer.");
+        }
+        m_nvrhi_textures.push_back(std::move(texture));
+        m_nvrhi_framebuffers.push_back(std::move(framebuffer));
+    }
 
     getLogChannel().info(
         "Created Vulkan swapchain ({}x{}, {} images, image {}, view {})",
@@ -213,6 +266,8 @@ bool VulkanSwapchain::recreate()
 
 void VulkanSwapchain::invalidate() noexcept
 {
+    m_nvrhi_framebuffers.clear();
+    m_nvrhi_textures.clear();
     m_image_views.clear();
     m_images.clear();
     m_swapchain = vk::raii::SwapchainKHR{nullptr};
@@ -239,6 +294,16 @@ vk::Image VulkanSwapchain::image(uint32_t index) const
 const vk::raii::ImageView& VulkanSwapchain::imageView(uint32_t index) const
 {
     return m_image_views.at(index);
+}
+
+nvrhi::ITexture& VulkanSwapchain::nvrhiTexture(uint32_t index) const
+{
+    return *m_nvrhi_textures.at(index).Get();
+}
+
+nvrhi::IFramebuffer& VulkanSwapchain::nvrhiFramebuffer(uint32_t index) const
+{
+    return *m_nvrhi_framebuffers.at(index).Get();
 }
 
 vk::Format VulkanSwapchain::format() const noexcept

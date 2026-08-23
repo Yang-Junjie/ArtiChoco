@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace arti::renderer {
@@ -19,6 +20,10 @@ enum class ShaderResourceType {
     StorageImage,
     UniformBuffer,
     StorageBuffer,
+    StorageBufferReadOnly,
+    StorageBufferReadWrite,
+    StructuredBufferReadOnly,
+    StructuredBufferReadWrite,
     UniformTexelBuffer,
     StorageTexelBuffer,
     CombinedImageSampler,
@@ -85,6 +90,9 @@ class SlangCompiler {
 public:
     static CompiledGraphicsProgram compileGraphics(const GraphicsShaderCompileInfo& info);
     static CompiledComputeProgram compileCompute(const ComputeShaderCompileInfo& info);
+    static CompiledComputeProgram compileComputeSource(std::string_view source,
+            std::string_view source_name = "inline_compute.slang",
+            std::string_view compute_entry_point = "computeMain");
 };
 
 } // namespace arti::renderer

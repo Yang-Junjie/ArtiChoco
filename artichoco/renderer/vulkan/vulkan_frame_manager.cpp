@@ -1,5 +1,10 @@
 #include "vulkan_frame_manager.h"
 
+#include "nvrhi_vulkan_device.h"
+#include "vulkan_frame_policy.h"
+
+#include <nvrhi/vulkan.h>
+
 #include <array>
 #include <limits>
 #include <stdexcept>
@@ -7,131 +12,74 @@
 
 namespace arti::renderer::vulkan {
 
-VulkanFrameContext::VulkanFrameContext(const VulkanDevice& device,
-                                       const vk::raii::CommandBuffer& command_buffer,
-                                       size_t frame_slot_index,
-                                       uint32_t image_index,
-                                       vk::Extent2D extent,
-                                       vk::Format color_format,
-                                       vk::Format depth_format,
-                                       vk::Image color_image,
-                                       vk::ImageView color_image_view,
-                                       vk::Image depth_image,
-                                       vk::ImageView depth_image_view,
-                                       bool acquire_suboptimal) noexcept
-    : m_commands(device, command_buffer),
+NvrhiFrameContext::NvrhiFrameContext(nvrhi::ICommandList& commands,
+        nvrhi::IFramebuffer& framebuffer, nvrhi::ITexture& color_texture,
+        size_t frame_slot_index, uint32_t image_index) noexcept
+    : m_commands(commands),
+      m_framebuffer(framebuffer),
+      m_color_texture(color_texture),
       m_frame_slot_index(frame_slot_index),
-      m_image_index(image_index),
-      m_extent(extent),
-      m_color_format(color_format),
-      m_depth_format(depth_format),
-      m_color_image(color_image),
-      m_color_image_view(color_image_view),
-      m_depth_image(depth_image),
-      m_depth_image_view(depth_image_view),
-      m_acquire_suboptimal(acquire_suboptimal)
+      m_image_index(image_index)
 {}
 
-size_t VulkanFrameContext::frameSlotIndex() const noexcept
-{
-    return m_frame_slot_index;
-}
-
-uint32_t VulkanFrameContext::imageIndex() const noexcept
-{
-    return m_image_index;
-}
-
-vk::Extent2D VulkanFrameContext::extent() const noexcept
-{
-    return m_extent;
-}
-
-vk::Format VulkanFrameContext::colorFormat() const noexcept
-{
-    return m_color_format;
-}
-
-vk::Format VulkanFrameContext::depthFormat() const noexcept
-{
-    return m_depth_format;
-}
-
-vk::Image VulkanFrameContext::colorImage() const noexcept
-{
-    return m_color_image;
-}
-
-vk::ImageView VulkanFrameContext::colorImageView() const noexcept
-{
-    return m_color_image_view;
-}
-
-vk::Image VulkanFrameContext::depthImage() const noexcept
-{
-    return m_depth_image;
-}
-
-vk::ImageView VulkanFrameContext::depthImageView() const noexcept
-{
-    return m_depth_image_view;
-}
-
-VulkanCommandRecorder& VulkanFrameContext::commands() noexcept
+nvrhi::ICommandList& NvrhiFrameContext::commands() const noexcept
 {
     return m_commands;
 }
 
-VulkanFrameToken::VulkanFrameToken(VulkanFrameManager& manager, VulkanFrameContext context) noexcept
-    : m_manager(&manager),
-      m_context(std::move(context))
-{}
-
-VulkanFrameToken::~VulkanFrameToken()
+nvrhi::IFramebuffer& NvrhiFrameContext::framebuffer() const noexcept
 {
-    if (m_manager != nullptr) {
-        m_manager->abandonFrame(*this);
-    }
+    return m_framebuffer;
 }
 
-VulkanFrameToken::VulkanFrameToken(VulkanFrameToken&& other) noexcept
-    : m_manager(std::exchange(other.m_manager, nullptr)),
-      m_context(std::move(other.m_context))
-{}
-
-VulkanFrameContext& VulkanFrameToken::context() noexcept
+nvrhi::ITexture& NvrhiFrameContext::colorTexture() const noexcept
 {
-    return m_context;
+    return m_color_texture;
 }
 
-size_t VulkanFrameToken::submit()
+const nvrhi::FramebufferInfoEx& NvrhiFrameContext::framebufferInfo() const noexcept
 {
-    if (m_manager == nullptr) {
-        throw std::logic_error("A Vulkan frame can only be submitted once.");
-    }
-    return m_manager->submitAndPresent(*this);
+    return m_framebuffer.getFramebufferInfo();
 }
 
-VulkanFrameManager::VulkanFrameManager(core::Window& window,
-                                       const VulkanDevice& device,
-                                       VulkanAllocator& allocator,
-                                       const VulkanSurface& surface,
-                                       uint32_t frames_in_flight)
+size_t NvrhiFrameContext::frameSlotIndex() const noexcept
+{
+    return m_frame_slot_index;
+}
+
+uint32_t NvrhiFrameContext::imageIndex() const noexcept
+{
+    return m_image_index;
+}
+
+VulkanFrameManager::VulkanFrameManager(core::Window& window, const VulkanDevice& device,
+        NvrhiVulkanDevice& nvrhi_device, const VulkanSurface& surface,
+        uint32_t frames_in_flight)
     : m_window(window),
       m_device(device),
-      m_allocator(allocator),
-      m_swapchain(window, device, surface)
+      m_nvrhi_device(nvrhi_device),
+      m_swapchain(window, device, nvrhi_device, surface),
+      m_nvrhi_command_list(nvrhi_device.device().createCommandList())
 {
     if (frames_in_flight == 0) {
         throw std::invalid_argument("VulkanFrameManager requires at least one frame in flight.");
     }
-
-    m_frame_slots.reserve(frames_in_flight);
-    for (uint32_t index = 0; index < frames_in_flight; ++index) {
-        m_frame_slots.emplace_back(device);
+    if (!m_nvrhi_command_list) {
+        throw std::runtime_error("Failed to create the NVRHI frame command list.");
     }
-    m_frame_slot_submitted.resize(m_frame_slots.size(), false);
-    createDepthBuffers();
+
+    m_frame_queries.reserve(frames_in_flight);
+    m_image_available_semaphores.reserve(frames_in_flight);
+    for (uint32_t index = 0; index < frames_in_flight; ++index) {
+        nvrhi::EventQueryHandle query = nvrhi_device.device().createEventQuery();
+        if (!query) {
+            throw std::runtime_error("Failed to create an NVRHI frame event query.");
+        }
+        m_frame_queries.push_back(std::move(query));
+        m_image_available_semaphores.emplace_back(
+                m_device.device(), vk::SemaphoreCreateInfo{});
+    }
+    m_frame_slot_submitted.resize(frames_in_flight, false);
     createRenderFinishedSemaphores();
 }
 
@@ -143,169 +91,178 @@ VulkanFrameManager::~VulkanFrameManager()
     }
 }
 
-VulkanFrameBeginResult VulkanFrameManager::beginFrame()
+NvrhiFrameResult VulkanFrameManager::renderNvrhiFrame(
+        const std::function<void(NvrhiFrameContext&)>& record)
 {
-    if (m_frame_active) {
-        throw std::logic_error("The active Vulkan frame must be submitted before beginning another frame.");
+    if (!record) {
+        throw std::invalid_argument("NVRHI frame recording requires a callback.");
     }
-
+    if (m_frame_active) {
+        throw std::logic_error("The active frame must be submitted before beginning another frame.");
+    }
     if (m_recovery_required) {
         recoverAbandonedFrame();
     }
 
-    VulkanFrameBeginResult result;
-    if (m_window.getFramebufferWidth() == 0 || m_window.getFramebufferHeight() == 0) {
+    NvrhiFrameResult result;
+    const uint32_t framebuffer_width = m_window.getFramebufferWidth();
+    const uint32_t framebuffer_height = m_window.getFramebufferHeight();
+    const vk::Extent2D current_extent = m_swapchain.extent();
+    const FramebufferAction framebuffer_action = evaluateFramebufferState({
+            framebuffer_width,
+            framebuffer_height,
+            current_extent.width,
+            current_extent.height,
+            m_recreate_swapchain,
+    });
+    if (framebuffer_action == FramebufferAction::DeferWhileMinimized) {
         m_recreate_swapchain = true;
         return result;
     }
-
-    const vk::Extent2D current_extent = m_swapchain.extent();
-    if (current_extent.width != m_window.getFramebufferWidth() ||
-        current_extent.height != m_window.getFramebufferHeight()) {
+    if (framebuffer_action == FramebufferAction::RecreateSwapchain) {
         m_recreate_swapchain = true;
     }
     if (m_recreate_swapchain && !recreateSwapchain()) {
         return result;
     }
 
-    auto& frame_slot = m_frame_slots.at(m_current_frame_slot);
-    const std::array fences = {*frame_slot.inFlightFence()};
-    if (m_device.device().waitForFences(fences, true, std::numeric_limits<uint64_t>::max()) != vk::Result::eSuccess) {
-        throw std::runtime_error("Timed out while waiting for a Vulkan frame fence.");
-    }
     if (m_frame_slot_submitted.at(m_current_frame_slot)) {
+        auto& query = m_frame_queries.at(m_current_frame_slot);
+        m_nvrhi_device.device().waitEventQuery(query);
+        m_nvrhi_device.device().resetEventQuery(query);
         result.completed_frame_slot = m_current_frame_slot;
         m_frame_slot_submitted[m_current_frame_slot] = false;
     }
 
+    const auto& image_available = m_image_available_semaphores.at(m_current_frame_slot);
     uint32_t image_index = 0;
-    bool acquire_suboptimal = false;
+    SwapchainStatus acquire_status = SwapchainStatus::Success;
     try {
         const auto acquired = m_swapchain.handle().acquireNextImage(
-            std::numeric_limits<uint64_t>::max(), *frame_slot.imageAvailableSemaphore(), nullptr);
+                std::numeric_limits<uint64_t>::max(), *image_available, nullptr);
         image_index = acquired.value;
-        acquire_suboptimal = acquired.result == vk::Result::eSuboptimalKHR;
+        if (acquired.result == vk::Result::eSuboptimalKHR) {
+            acquire_status = SwapchainStatus::Suboptimal;
+        }
     } catch (const vk::OutOfDateKHRError&) {
-        m_recreate_swapchain = true;
+        m_recreate_swapchain = requiresSwapchainRecreation(
+                SwapchainStatus::OutOfDate, SwapchainStatus::Success);
         recreateSwapchain();
         return result;
     }
 
     m_frame_active = true;
+    bool command_list_open = false;
+    bool command_list_started = false;
+    bool command_list_executed = false;
+    bool acquire_wait_queued = false;
     try {
-        frame_slot.commandPool().reset();
-        auto& depth_buffer = m_depth_buffers.at(m_current_frame_slot);
-        result.frame.emplace(VulkanFrameToken{
-            *this,
-            VulkanFrameContext{
-                m_device,
-                frame_slot.commandBuffer(),
+        m_nvrhi_command_list->open();
+        command_list_open = true;
+        command_list_started = true;
+        NvrhiFrameContext frame_context{
+                *m_nvrhi_command_list,
+                m_swapchain.nvrhiFramebuffer(image_index),
+                m_swapchain.nvrhiTexture(image_index),
                 m_current_frame_slot,
                 image_index,
-                m_swapchain.extent(),
-                m_swapchain.format(),
-                depth_buffer.format(),
-                m_swapchain.image(image_index),
-                *m_swapchain.imageView(image_index),
-                depth_buffer.image(),
-                *depth_buffer.imageView(),
-                acquire_suboptimal,
-            },
-        });
-        result.frame->context().commands().begin();
+        };
+        record(frame_context);
+        m_nvrhi_command_list->close();
+        command_list_open = false;
+
+        const auto& render_finished = m_render_finished_semaphores.at(image_index);
+        m_nvrhi_device.nativeDevice().queueWaitForSemaphore(nvrhi::CommandQueue::Graphics,
+                static_cast<VkSemaphore>(*image_available), 0);
+        acquire_wait_queued = true;
+        m_nvrhi_device.nativeDevice().queueSignalSemaphore(nvrhi::CommandQueue::Graphics,
+                static_cast<VkSemaphore>(*render_finished), 0);
+        m_nvrhi_device.device().executeCommandList(
+                m_nvrhi_command_list, nvrhi::CommandQueue::Graphics);
+        command_list_executed = true;
+        m_nvrhi_device.device().setEventQuery(
+                m_frame_queries.at(m_current_frame_slot), nvrhi::CommandQueue::Graphics);
+        m_frame_slot_submitted[m_current_frame_slot] = true;
+        result.submitted_frame_slot = m_current_frame_slot;
+
+        const std::array wait_semaphores = {*render_finished};
+        const std::array swapchains = {*m_swapchain.handle()};
+        const std::array image_indices = {image_index};
+        vk::PresentInfoKHR present_info{};
+        present_info.setWaitSemaphores(wait_semaphores)
+                .setSwapchains(swapchains)
+                .setImageIndices(image_indices);
+        SwapchainStatus present_status = SwapchainStatus::Success;
+        try {
+            const vk::Result present_result = m_device.presentQueue().presentKHR(present_info);
+            if (present_result == vk::Result::eSuboptimalKHR) {
+                present_status = SwapchainStatus::Suboptimal;
+            }
+        } catch (const vk::OutOfDateKHRError&) {
+            present_status = SwapchainStatus::OutOfDate;
+        }
+        m_recreate_swapchain = requiresSwapchainRecreation(
+                acquire_status, present_status);
+
+        m_frame_active = false;
+        m_current_frame_slot = (m_current_frame_slot + 1) % m_frame_queries.size();
+        m_nvrhi_device.device().runGarbageCollection();
+        result.rendered = true;
+        return result;
     } catch (...) {
-        if (result.frame) {
-            result.frame.reset();
-        } else {
-            m_recovery_required = true;
-            m_frame_active = false;
+        if (command_list_open) {
             try {
-                recoverAbandonedFrame();
+                m_nvrhi_command_list->close();
+                command_list_open = false;
             } catch (...) {
             }
         }
+        if (command_list_started && !command_list_executed && !command_list_open) {
+            try {
+                if (!acquire_wait_queued) {
+                    m_nvrhi_device.nativeDevice().queueWaitForSemaphore(
+                            nvrhi::CommandQueue::Graphics,
+                            static_cast<VkSemaphore>(*image_available), 0);
+                }
+                m_nvrhi_device.device().executeCommandList(
+                        m_nvrhi_command_list, nvrhi::CommandQueue::Graphics);
+                m_nvrhi_device.device().waitForIdle();
+            } catch (...) {
+            }
+        }
+        m_frame_active = false;
+        m_recovery_required = true;
+        try {
+            recoverAbandonedFrame();
+        } catch (...) {
+        }
         throw;
     }
-    return result;
 }
 
-size_t VulkanFrameManager::submitAndPresent(VulkanFrameToken& frame_token)
+NvrhiClearFrameResult VulkanFrameManager::renderNvrhiClearFrame(
+        const nvrhi::Color& clear_color)
 {
-    auto& frame = frame_token.m_context;
-    if (!m_frame_active || frame.frameSlotIndex() != m_current_frame_slot) {
-        throw std::logic_error("Only the active Vulkan frame can be submitted.");
-    }
-
-    frame.commands().end();
-    auto& frame_slot = m_frame_slots.at(m_current_frame_slot);
-    vk::SemaphoreSubmitInfo wait_semaphore{};
-    wait_semaphore.setSemaphore(*frame_slot.imageAvailableSemaphore())
-        .setStageMask(vk::PipelineStageFlagBits2::eColorAttachmentOutput);
-    vk::CommandBufferSubmitInfo command_buffer{};
-    command_buffer.setCommandBuffer(*frame_slot.commandBuffer());
-    const auto& render_finished = m_render_finished_semaphores.at(frame.imageIndex());
-    vk::SemaphoreSubmitInfo signal_semaphore{};
-    signal_semaphore.setSemaphore(*render_finished).setStageMask(vk::PipelineStageFlagBits2::eAllCommands);
-
-    vk::SubmitInfo2 submit_info{};
-    submit_info.setWaitSemaphoreInfos(wait_semaphore)
-        .setCommandBufferInfos(command_buffer)
-        .setSignalSemaphoreInfos(signal_semaphore);
-    const std::array submits = {submit_info};
-    const std::array fences = {*frame_slot.inFlightFence()};
-    m_device.device().resetFences(fences);
-    if (m_device.usesCore13()) {
-        m_device.graphicsQueue().submit2(submits, *frame_slot.inFlightFence());
-    } else {
-        m_device.graphicsQueue().submit2KHR(submits, *frame_slot.inFlightFence());
-    }
-
-    const size_t submitted_frame_slot = m_current_frame_slot;
-    m_frame_slot_submitted[submitted_frame_slot] = true;
-
-    const std::array wait_semaphores = {*render_finished};
-    const std::array swapchains = {*m_swapchain.handle()};
-    const std::array image_indices = {frame.imageIndex()};
-    vk::PresentInfoKHR present_info{};
-    present_info.setWaitSemaphores(wait_semaphores).setSwapchains(swapchains).setImageIndices(image_indices);
-    try {
-        const vk::Result present_result = m_device.presentQueue().presentKHR(present_info);
-        m_recreate_swapchain = frame.m_acquire_suboptimal || present_result == vk::Result::eSuboptimalKHR;
-    } catch (const vk::OutOfDateKHRError&) {
-        m_recreate_swapchain = true;
-    }
-
-    frame_token.m_manager = nullptr;
-    m_frame_active = false;
-    m_current_frame_slot = (m_current_frame_slot + 1) % m_frame_slots.size();
-    return submitted_frame_slot;
-}
-
-void VulkanFrameManager::abandonFrame(VulkanFrameToken& frame) noexcept
-{
-    if (frame.m_manager != this) {
-        return;
-    }
-
-    frame.m_manager = nullptr;
-    m_frame_active = false;
-    m_recovery_required = true;
-    try {
-        recoverAbandonedFrame();
-    } catch (...) {
-    }
+    return renderNvrhiFrame([clear_color](NvrhiFrameContext& frame) {
+        frame.commands().clearTextureFloat(
+                &frame.colorTexture(), nvrhi::AllSubresources, clear_color);
+    });
 }
 
 void VulkanFrameManager::recoverAbandonedFrame()
 {
-    VulkanFrameSlot replacement_frame_slot{m_device};
+    m_nvrhi_command_list = nullptr;
     waitIdle();
 
-    m_frame_slots.at(m_current_frame_slot) = std::move(replacement_frame_slot);
+    m_nvrhi_command_list = m_nvrhi_device.device().createCommandList();
+    if (!m_nvrhi_command_list) {
+        throw std::runtime_error("Failed to recreate the NVRHI frame command list.");
+    }
+    m_image_available_semaphores.at(m_current_frame_slot) =
+            vk::raii::Semaphore{m_device.device(), vk::SemaphoreCreateInfo{}};
     m_swapchain.invalidate();
-    m_depth_buffers.clear();
     m_render_finished_semaphores.clear();
-    m_frame_slot_submitted.at(m_current_frame_slot) = false;
+    m_frame_slot_submitted[m_current_frame_slot] = false;
     m_recreate_swapchain = true;
     m_recovery_required = false;
 }
@@ -318,20 +275,12 @@ void VulkanFrameManager::requestSwapchainRecreation() noexcept
 void VulkanFrameManager::waitIdle() const
 {
     m_device.device().waitIdle();
+    m_nvrhi_device.device().runGarbageCollection();
 }
 
 size_t VulkanFrameManager::frameSlotCount() const noexcept
 {
-    return m_frame_slots.size();
-}
-
-VulkanPresentationInfo VulkanFrameManager::presentationInfo() const noexcept
-{
-    return {
-        m_swapchain.format(),
-        m_swapchain.minImageCount(),
-        static_cast<uint32_t>(m_swapchain.imageCount()),
-    };
+    return m_frame_queries.size();
 }
 
 bool VulkanFrameManager::recreateSwapchain()
@@ -343,23 +292,10 @@ bool VulkanFrameManager::recreateSwapchain()
     waitIdle();
     const bool recreated = m_swapchain.recreate();
     if (recreated) {
-        createDepthBuffers();
         createRenderFinishedSemaphores();
     }
     m_recreate_swapchain = !recreated;
     return recreated;
-}
-
-void VulkanFrameManager::createDepthBuffers()
-{
-    m_depth_buffers.clear();
-    if (!m_swapchain.isRenderable()) {
-        return;
-    }
-    m_depth_buffers.reserve(m_frame_slots.size());
-    for (size_t index = 0; index < m_frame_slots.size(); ++index) {
-        m_depth_buffers.emplace_back(m_device, m_allocator, m_swapchain.extent());
-    }
 }
 
 void VulkanFrameManager::createRenderFinishedSemaphores()
@@ -367,7 +303,8 @@ void VulkanFrameManager::createRenderFinishedSemaphores()
     m_render_finished_semaphores.clear();
     m_render_finished_semaphores.reserve(m_swapchain.imageCount());
     for (size_t index = 0; index < m_swapchain.imageCount(); ++index) {
-        m_render_finished_semaphores.emplace_back(m_device.device(), vk::SemaphoreCreateInfo{});
+        m_render_finished_semaphores.emplace_back(
+                m_device.device(), vk::SemaphoreCreateInfo{});
     }
 }
 

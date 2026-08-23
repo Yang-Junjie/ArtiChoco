@@ -17,9 +17,7 @@ class Window;
 
 namespace arti::renderer {
 class RenderDevice;
-namespace vulkan {
-class VulkanPass;
-} // namespace vulkan
+class RenderPass;
 } // namespace arti::renderer
 
 namespace arti::test_app {
@@ -41,8 +39,8 @@ public:
     void onDetach(scene::Scene& scene) override;
     void onUpdate(scene::Scene& scene, const scene::UpdateContext& context) override;
 
-    void prependPass(renderer::vulkan::VulkanPass* pass);
-    void removePass(renderer::vulkan::VulkanPass* pass) noexcept;
+    void prependPass(renderer::RenderPass* pass);
+    void removePass(renderer::RenderPass* pass) noexcept;
 
     void waitForFrameComplete();
     std::exception_ptr consumeRenderError();
@@ -51,7 +49,7 @@ public:
 private:
     void ensurePasses(scene::Scene& scene);
     void renderThreadLoop();
-    std::vector<renderer::vulkan::VulkanPass*> snapshotPasses();
+    std::vector<renderer::RenderPass*> snapshotPasses();
 
     renderer::RenderDevice& m_render_device;
     core::Window& m_window;
@@ -69,7 +67,7 @@ private:
     std::unique_ptr<TextureComputePass> m_texture_compute_pass;
     std::unique_ptr<MrtMeshPass> m_mrt_mesh_pass;
     std::unique_ptr<MrtCompositePass> m_mrt_composite_pass;
-    std::vector<renderer::vulkan::VulkanPass*> m_passes;
+    std::vector<renderer::RenderPass*> m_passes;
     bool m_passes_initialized{false};
     float m_elapsed_time{0.0f};
     std::atomic<size_t> m_last_draw_count{0};

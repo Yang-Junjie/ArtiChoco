@@ -1,45 +1,36 @@
 add_library(artichoco_renderer STATIC
-    detail/deferred_release_queue.cpp
     index_buffer.cpp
+    render_pass.cpp
     renderer_log.cpp
     slang_compiler.cpp
     texture_2d.cpp
     texture_cube.cpp
     vertex_buffer.cpp
-    vulkan/vulkan_allocator.cpp
-    vulkan/vulkan_buffer.cpp
-    vulkan/vulkan_binding_layout.cpp
-    vulkan/vulkan_binding_set.cpp
-    vulkan/vulkan_command_recorder.cpp
-    vulkan/vulkan_compute_pipeline.cpp
-    vulkan/vulkan_compute_shader.cpp
     vulkan/vulkan_context.cpp
-    vulkan/vulkan_depth_buffer.cpp
-    vulkan/vulkan_descriptor_allocator.cpp
     vulkan/vulkan_device.cpp
     vulkan/vulkan_frame_manager.cpp
-    vulkan/vulkan_frame_slot.cpp
-    vulkan/vulkan_image.cpp
-    vulkan/vulkan_pipeline.cpp
-    vulkan/vulkan_pipeline_cache.cpp
-    vulkan/vulkan_pipeline_layout.cpp
-    vulkan/vulkan_resource_state.cpp
-    vulkan/vulkan_sampler.cpp
-    vulkan/vulkan_pass_context.cpp
-    vulkan/vulkan_shader.cpp
-    vulkan/vulkan_upload_context.cpp
+    vulkan/nvrhi_vulkan_dispatch.cpp
+    vulkan/nvrhi_vulkan_device.cpp
+    vulkan/nvrhi_resource_smoke.cpp
+    vulkan/nvrhi_resource_upload.cpp
+    vulkan/nvrhi_mipmap.cpp
+    vulkan/nvrhi_shader_factory.cpp
     render_device.cpp
     vulkan/vulkan_surface.cpp
     vulkan/vulkan_swapchain.cpp
 )
 add_library(ArtiChoco::Renderer ALIAS artichoco_renderer)
 artichoco_configure_library(artichoco_renderer)
+if(WIN32)
+    target_compile_definitions(artichoco_renderer PRIVATE NOMINMAX)
+endif()
 target_link_libraries(artichoco_renderer
     PUBLIC
         ArtiChoco::Core
         ArtiSDK::Vulkan
-        GPUOpen::VulkanMemoryAllocator
+        nvrhi
     PRIVATE
         ArtiSDK::GLM
         ArtiSDK::Slang
+        nvrhi_vk
 )

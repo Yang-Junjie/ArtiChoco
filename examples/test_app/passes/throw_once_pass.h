@@ -1,11 +1,11 @@
 #pragma once
-#include "artichoco/renderer/vulkan/vulkan_pass.h"
+#include "artichoco/renderer/render_pass.h"
 
 namespace arti::test_app {
 
-class ThrowOncePass final : public renderer::vulkan::VulkanPass {
+class ThrowOncePass final : public renderer::RenderPass {
 public:
-    void record(renderer::vulkan::VulkanPassContext& context) override;
+    void record(renderer::RenderPassContext& context) override;
     bool didThrow() const noexcept;
 
 private:

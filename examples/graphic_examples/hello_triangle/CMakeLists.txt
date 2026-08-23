@@ -2,7 +2,6 @@ add_executable(hello_triangle
     application.cpp
     hello_triangle_layer.cpp
     triangle_pass.cpp
-    triangle_renderer.cpp
 )
 
 set(_arti_hello_triangle_shader_source

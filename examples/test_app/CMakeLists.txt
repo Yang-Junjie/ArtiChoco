@@ -2,6 +2,7 @@ add_executable(test_app
     application.cpp
     camera_controller_system.cpp
     image_loader.cpp
+    passes/cubemap_attachment_pass.cpp
     passes/mrt_composite_pass.cpp
     passes/mrt_mesh_pass.cpp
     passes/texture_compute_pass.cpp
@@ -23,11 +24,23 @@ set(_arti_test_compute_shader
 set(_arti_test_compute_shader_output
     "${_arti_test_shader_directory}/texture_compute.slang"
 )
+set(_arti_test_triangle_shader
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/nvrhi_triangle.slang"
+)
+set(_arti_test_triangle_shader_output
+    "${_arti_test_shader_directory}/nvrhi_triangle.slang"
+)
 set(_arti_test_composite_shader
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/mrt_composite.slang"
 )
 set(_arti_test_composite_shader_output
     "${_arti_test_shader_directory}/mrt_composite.slang"
+)
+set(_arti_test_cubemap_shader
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/cubemap_attachment.slang"
+)
+set(_arti_test_cubemap_shader_output
+    "${_arti_test_shader_directory}/cubemap_attachment.slang"
 )
 set(_arti_test_brownie_texture
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/brownie.png"
@@ -64,6 +77,15 @@ add_custom_command(
     VERBATIM
 )
 add_custom_command(
+    OUTPUT "${_arti_test_triangle_shader_output}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${_arti_test_shader_directory}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${_arti_test_triangle_shader}"
+        "${_arti_test_triangle_shader_output}"
+    DEPENDS "${_arti_test_triangle_shader}"
+    VERBATIM
+)
+add_custom_command(
     OUTPUT "${_arti_test_composite_shader_output}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${_arti_test_shader_directory}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -72,18 +94,31 @@ add_custom_command(
     DEPENDS "${_arti_test_composite_shader}"
     VERBATIM
 )
+add_custom_command(
+    OUTPUT "${_arti_test_cubemap_shader_output}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${_arti_test_shader_directory}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${_arti_test_cubemap_shader}"
+        "${_arti_test_cubemap_shader_output}"
+    DEPENDS "${_arti_test_cubemap_shader}"
+    VERBATIM
+)
 add_custom_target(test_app_assets
     DEPENDS
         "${_arti_test_mesh_shader_output}"
         "${_arti_test_compute_shader_output}"
+        "${_arti_test_triangle_shader_output}"
         "${_arti_test_composite_shader_output}"
+        "${_arti_test_cubemap_shader_output}"
         "${_arti_test_brownie_texture_output}"
 )
 add_dependencies(test_app test_app_assets)
 target_compile_definitions(test_app PRIVATE
     ARTI_TEST_MESH_SHADER_PATH="${_arti_test_mesh_shader_output}"
     ARTI_TEST_COMPUTE_SHADER_PATH="${_arti_test_compute_shader_output}"
+    ARTI_TEST_TRIANGLE_SHADER_PATH="${_arti_test_triangle_shader_output}"
     ARTI_TEST_COMPOSITE_SHADER_PATH="${_arti_test_composite_shader_output}"
+    ARTI_TEST_CUBEMAP_SHADER_PATH="${_arti_test_cubemap_shader_output}"
     ARTI_TEST_BROWNIE_TEXTURE_PATH="${_arti_test_brownie_texture_output}"
 )
 target_include_directories(test_app SYSTEM PRIVATE
@@ -106,6 +141,10 @@ target_link_libraries(test_app
 
 artichoco_stage_vulkan_sdk_runtime(test_app)
 set_target_properties(test_app PROPERTIES FOLDER "Examples")
+
+add_executable(vulkan_frame_policy_smoke vulkan_frame_policy_smoke.cpp)
+target_link_libraries(vulkan_frame_policy_smoke PRIVATE ArtiChoco::Renderer)
+set_target_properties(vulkan_frame_policy_smoke PROPERTIES FOLDER "Examples")
 
 add_executable(scene_serialization_smoke scene_serialization_smoke.cpp)
 target_link_libraries(scene_serialization_smoke PRIVATE ArtiChoco::Scene)

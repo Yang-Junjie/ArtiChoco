@@ -1,156 +1,109 @@
 # Renderer Architecture
 
-`Renderer` is the public facade. Its `Impl` is a composition root whose members
-make Vulkan ownership and destruction order explicit:
+`RenderDevice` is the public facade. Its implementation owns the Vulkan bootstrap
+and the NVRHI Vulkan device in this order:
 
-1. Surface source, instance, surface, device, allocator, and upload services.
-2. Descriptor allocation and `VulkanFrameManager`.
-3. `DeferredReleaseQueue` for resources referenced by submitted frame slots.
+1. Surface source, Vulkan instance, surface, physical device, and queues.
+2. `nvrhi::vulkan::IDevice`, wrapping the existing Vulkan handles.
+3. `VulkanSwapchain`, which wraps swapchain images as NVRHI textures and
+   framebuffers.
+4. `VulkanFrameManager`, which records and submits NVRHI command lists.
 
-`Impl` coordinates resource creation and one `renderFrame` call. It is not a
-backend, RHI, render graph, or catch-all Vulkan abstraction. Vulkan behavior stays
-in the focused objects under `renderer/vulkan`.
+Application passes implement the backend-independent `RenderPass` interface.
+`RenderDevice::renderFrame` gives each pass an NVRHI device, command list,
+framebuffer, and swapchain color texture. Resource creation, pipelines, bindings,
+uploads, and state transitions use NVRHI APIs; business renderer headers do not
+expose Vulkan handles or the removed legacy Vulkan pass API.
 
-`DeferredResourceOwner` is a lifetime anchor, not the release queue itself.
-Public resource handles retain a shared owner so the allocator and device outlive
-those handles even when the public `Renderer` has already been destroyed. The
-owner delegates release bookkeeping to `DeferredReleaseQueue`.
+## Vulkan boundary
 
-## Frame terminology
+The native Vulkan boundary is limited to bootstrap and presentation:
 
-- A frame slot is one entry in the frames-in-flight ring. `VulkanFrameSlot` owns
-  its command pool, command buffer, acquire semaphore, and in-flight fence.
-- A swapchain image is selected independently by `imageIndex()` and is not a
-  frame slot.
-- `VulkanFrameToken` owns one acquired swapchain image from command recording
-  through submit, present, or abandonment.
-- A completed frame slot has a signaled fence and may retire deferred resources.
+1. SDL provides a `VkSurfaceKHR` source.
+2. `VulkanContext` creates the instance and validation messenger.
+3. `VulkanDevice` selects the physical device and graphics/present queues.
+4. `VulkanSwapchain` creates image views and exposes the native swapchain for
+   acquire and present.
+5. `VulkanFrameManager` acquires an image with a native semaphore, records NVRHI
+   commands, bridges NVRHI queue wait/signal calls, and presents with the native
+   present queue.
 
-The frame sequence is:
+NVRHI owns resource state tracking and command-list lifetime tracking. The frame
+   manager calls `runGarbageCollection` after submissions and after idle waits;
+   NVRHI keeps referenced resources alive until the GPU has completed each command
+   list. Resize and out-of-date recovery invalidate NVRHI back-buffer wrappers,
+   wait for the device, and recreate the swapchain before the next frame.
 
-1. Prepare every pass before acquiring a swapchain image.
-2. Begin a frame and retire the previously completed frame slot, if any.
-3. Record the ordered passes into the token's frame slot.
-4. Submit and present the token.
-5. Mark that frame slot as submitted for deferred resource release.
+## Shaders and reflection
 
-If preparation throws, no frame has been acquired. If recording or submission
-throws, destruction of the active token abandons the recording, replaces its frame
-slot synchronization objects, and invalidates the acquired swapchain. The next
-frame recreates the swapchain before recording.
+Slang remains the source and reflection authority. `SlangCompiler` targets SPIR-V.
+`nvrhi_shader_factory` creates NVRHI vertex, fragment, and compute shaders from
+that bytecode and maps Slang reflection data to NVRHI binding layouts and sets:
 
-## Threading model
+- descriptor sets become NVRHI `registerSpace` values;
+- constant buffers, sampled/storage textures, structured/raw buffers, and samplers
+  map to their NVRHI binding types;
+- arrays retain their reflected descriptor counts;
+- push-constant ranges are represented by NVRHI push-constant bindings.
 
-The renderer currently uses one render thread. The following operations must run
-on that thread:
+## Coordinate convention
 
-- Constructing and destroying `Renderer`.
-- Calling `renderFrame`, `waitIdle`, or requesting swapchain recreation.
-- Creating vertex buffers, index buffers, and textures.
-- Allocating descriptors and recording uploads or Vulkan commands.
+Rendering code follows NVRHI's Direct3D-style screen convention on every backend.
+The NVRHI Vulkan backend applies a negative viewport height, so GLM projection
+matrices configured with `GLM_FORCE_DEPTH_ZERO_TO_ONE` must be used without an
+additional `projection[1][1]` sign flip. Fullscreen triangles map top-left UVs to
+clip space with `(uv.x * 2 - 1, 1 - uv.y * 2)`. Mesh geometry uses outward-facing
+counter-clockwise winding and declares `frontCounterClockwise` explicitly in its
+raster state.
 
-Worker threads may perform file IO, decompression, image decoding, mesh parsing,
-and other CPU-only asset work. A future asynchronous asset system should send
-completed CPU data to the render thread through an upload queue. Worker threads
-must not call Vulkan or resource-creation methods directly.
+## Resources and state
 
-`VertexBuffer`, `IndexBuffer`, and `Texture2D` may be released on a worker thread
-after no CPU-side render state can reference them. During normal rendering, their
-destructors enqueue a move-only task through `DeferredResourceOwner`. The render
-thread executes it after every submitted frame slot that could reference the
-resource has completed.
+`VertexBuffer`, `IndexBuffer`, `Texture2D`, and `TextureCube` store NVRHI handles.
+Uploads use NVRHI command lists and automatic state tracking. Texture mip chains
+are generated on the CPU when requested and uploaded as explicit NVRHI subresources;
+GPU synchronization and final resource states remain NVRHI-managed.
 
-The queue mutex protects only deferred-release bookkeeping. Vulkan destruction is
-performed outside that lock. It does not make `Renderer`, pass recording, uploads,
-or individual resource objects generally thread-safe.
+Public resources hold a small `ResourceOwner` shared pointer. It keeps the
+`RenderDevice` implementation alive when a resource outlives the facade and is
+used only to reject cross-device resource access. NVRHI command-list lifetime
+tracking, `waitForIdle`, and `runGarbageCollection` provide GPU-safe destruction;
+there is no renderer-side deferred-release queue.
 
-Renderer shutdown must happen on the render thread after producers stop creating
-new upload requests. Shutdown waits for the device and drains the queue. A resource
-handle released after shutdown destroys its allocation synchronously on the
-releasing thread; its shared owner keeps the idle allocator and device alive until
-that destruction finishes.
+## Frame and threading model
 
-## Vulkan pass lifetime
+The renderer uses one render thread. Constructing or destroying `RenderDevice`,
+creating resources, recording passes, requesting swapchain recreation, and calling
+`waitIdle` must happen on that thread. Worker threads may perform file IO,
+decompression, image decoding, and other CPU-only work, then hand completed data
+to the render thread for upload.
 
-Application rendering is an explicit ordered list of `VulkanPass` objects.
-Prepare and record contexts are non-owning, non-copyable views valid only for their
-respective calls. Passes must not retain either context.
+`VulkanFrameManager` keeps a frames-in-flight ring. Each slot has an image-acquired
+semaphore, an NVRHI event query, and a submitted flag. A slot is reused only after
+its query completes, while the swapchain image index is selected independently by
+Vulkan acquire.
 
-Passes explicitly declare synchronization with `vk::PipelineStageFlags2`,
-`vk::AccessFlags2`, and `vk::ImageLayout`. There is no automatic state tracking or
-render graph. A producing pass records the barrier required by its next consumer.
-The final swapchain writer transitions the image to
-`vk::ImageLayout::ePresentSrcKHR` before submission.
+## Verification
 
-`VulkanBufferState` and `VulkanImageState` are explicit values used to construct
-native Synchronization2 barriers. They do not store or infer a resource's current
-state. Upload calls require a final state and record the dependency from their Copy
-write to that caller-selected state.
+`examples/test_app` provides the retained renderer smoke coverage:
 
-## Vulkan buffer semantics
+- `--smoke-nvrhi`: resource upload/release, GPU mipmap readback, Slang
+  reflection, cubemap-face attachment readback, clear/present, and resize;
+- `--smoke-render`: compute, MRT graphics, exception recovery, resize, and scene/
+  project integration.
+- `vulkan_frame_policy_smoke`: deterministic minimize, resize, out-of-date, and
+  suboptimal swapchain policy coverage.
 
-`VulkanBuffer` owns one VMA allocation while leaving Vulkan usage and synchronization
-visible to its caller. It has two memory policies:
+The old Vulkan-only showcase and hello-triangle implementations were removed.
+The replacement `examples/graphic_examples` programs all use the Application +
+Layer + `RenderPass` structure, NVRHI resources and commands, and Slang SPIR-V
+compilation/reflection:
 
-- `DeviceLocal` prefers device memory and adds `eTransferDst` so
-  `uploadInitial()` can populate a newly-created buffer through the shared staging
-  upload context. The caller supplies the first consumer's `VulkanBufferState`.
-- `HostVisible` prefers host memory, stays mapped for its lifetime, and exposes
-  bounded `write()` calls. Each write flushes the written allocation range.
-
-Neither policy tracks GPU state. `uploadInitial()` establishes only the dependency
-from its Copy write to the supplied first-consumer state. Rewriting a buffer after
-GPU use requires the caller to synchronize the old use with the new transfer or
-host write before invoking the update.
-
-`VulkanBindingSet::writeUniformBuffer()` and `writeStorageBuffer()` validate both
-the reflected descriptor type and the buffer's Vulkan usage. Dynamic per-frame
-data uses one Host-visible Uniform Buffer per frame slot. A slot is written only
-after `beginFrame()` has waited for that slot's fence; persistent mapping alone is
-not a CPU/GPU synchronization mechanism.
-
-## Graphics pipelines and attachments
-
-`VulkanGraphicsPipelineCreateInfo` describes the attachment contract used by
-dynamic rendering. Its ordered `color_formats` list defines the Fragment output
-locations, and `color_blend_attachments` optionally supplies one native Vulkan
-blend state per color attachment. An empty blend-state list means opaque writes
-to every color component. A non-empty list must match the format count exactly.
-
-Devices enable `independentBlend` when it is supported. MRT remains available
-without that optional feature, but pipelines on such devices must use identical
-blend states for every color attachment. Differing states are rejected during
-pipeline creation rather than deferred to Vulkan Validation.
-
-Depth is optional and explicit. Enabling depth testing or writes without a depth
-format is invalid. A zero-stride, attribute-free `VertexBufferLayout` represents
-no vertex inputs and can be used with `VulkanCommandRecorder::draw()` for
-procedural full-screen geometry.
-
-`VulkanImage` can own sampled color attachments by combining native
-`eColorAttachment` and `eSampled` usage. It does not remember attachment state.
-The MRT producer transitions every output from its known prior state to attachment
-write, then to the state required by the next sampling pass.
-
-## Texture resources and cube images
-
-`Texture2D` and `TextureCube` are public, move-only resources owned by the
-`RenderDevice`. Cube faces are supplied in Vulkan layer order: positive X,
-negative X, positive Y, negative Y, positive Z, then negative Z. Every face must
-contain the same square extent and format. `RGBA8Unorm`, `RGBA8Srgb`, and
-`RGBA16Float` are supported. Cube mip chains are explicit: callers provide every
-level, and each size must halve down from the base. The upload path does not
-silently generate missing mips.
-
-`VulkanImageCreateInfo` expresses mip count, array-layer count, image flags, and
-the primary view type. A cube uses six layers, `eCubeCompatible`, and an `eCube`
-primary sampled view. `VulkanImage::createView()` creates validated restricted
-views, while `createLayerView()` is the single-mip, single-layer convenience used
-for cube-face color attachments. Multi-layer and multi-mip initial data is
-uploaded through explicit `vk::BufferImageCopy` regions and one subresource range;
-image state remains caller-managed after that upload.
-
-Pipeline objects, binding layouts, binding sets, and pass-owned images must outlive
-every submitted frame slot that references them. For now, destroy or replace those
-objects only after `Renderer::waitIdle()`. Connecting pass-owned Vulkan objects to
-the deferred-release queue is a later resource-lifetime phase.
+- `hello_triangle`: the minimal NVRHI graphics pipeline;
+- `hello_cube`: indexed geometry, push constants, an sRGB texture, GPU mipmaps,
+  and reflected texture/sampler bindings;
+- `basic_lighting`: normal-based directional and Blinn-Phong lighting, `D32`
+  depth, and an HDR offscreen/present pass pair;
+- `instancing`: 225 animated cubes in one indexed draw with per-instance vertex
+  data and per-back-buffer depth attachments;
+- `render_to_texture`: a procedural 512 by 512 render target sampled on a
+  depth-tested cube in a second pass.

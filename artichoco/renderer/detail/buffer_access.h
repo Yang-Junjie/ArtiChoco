@@ -1,41 +1,37 @@
 #pragma once
-#include "artichoco/renderer/detail/deferred_resource_owner.h"
+#include "artichoco/renderer/detail/resource_owner.h"
 #include "artichoco/renderer/index_buffer.h"
 #include "artichoco/renderer/vertex_buffer.h"
-
-#include <vulkan/vulkan.hpp>
 
 #include <cstddef>
 #include <span>
 
-namespace arti::renderer::vulkan {
-class VulkanAllocator;
-class VulkanUploadContext;
-}
+namespace nvrhi {
+class IBuffer;
+class IDevice;
+} // namespace nvrhi
 
 namespace arti::renderer::detail {
 
 class BufferAccess {
 public:
     static VertexBuffer createVertexBuffer(
-        vulkan::VulkanAllocator& allocator,
-        vulkan::VulkanUploadContext& upload_context,
-        DeferredResourceOwnerPtr owner,
+        nvrhi::IDevice& device,
+        ResourceOwnerPtr owner,
         std::span<const std::byte> data,
         uint32_t vertex_count,
         VertexBufferLayout layout);
     static IndexBuffer createIndexBuffer(
-        vulkan::VulkanAllocator& allocator,
-        vulkan::VulkanUploadContext& upload_context,
-        DeferredResourceOwnerPtr owner,
+        nvrhi::IDevice& device,
+        ResourceOwnerPtr owner,
         std::span<const std::byte> data,
         uint32_t index_count,
         IndexType index_type);
 
-    static vk::Buffer handle(const VertexBuffer& buffer) noexcept;
-    static vk::Buffer handle(const IndexBuffer& buffer) noexcept;
-    static bool isOwnedBy(const VertexBuffer& buffer, const DeferredResourceOwner* owner) noexcept;
-    static bool isOwnedBy(const IndexBuffer& buffer, const DeferredResourceOwner* owner) noexcept;
+    static nvrhi::IBuffer& nvrhiHandle(const VertexBuffer& buffer) noexcept;
+    static nvrhi::IBuffer& nvrhiHandle(const IndexBuffer& buffer) noexcept;
+    static bool isOwnedBy(const VertexBuffer& buffer, const ResourceOwner* owner) noexcept;
+    static bool isOwnedBy(const IndexBuffer& buffer, const ResourceOwner* owner) noexcept;
 };
 
 } // namespace arti::renderer::detail

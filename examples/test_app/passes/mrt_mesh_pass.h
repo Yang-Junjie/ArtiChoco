@@ -1,6 +1,5 @@
 #pragma once
-#include "artichoco/renderer/vulkan/vulkan_pass.h"
-#include "artichoco/renderer/vulkan/vulkan_sampler.h"
+#include "artichoco/renderer/render_pass.h"
 #include "frame_data.h"
 #include "texture_compute_pass.h"
 
@@ -8,25 +7,20 @@
 #include <filesystem>
 #include <memory>
 
-namespace arti::renderer {
-namespace vulkan {
-class VulkanImage;
-} // namespace vulkan
-} // namespace arti::renderer
-
 namespace arti::test_app {
 
-class MrtMeshPass final : public renderer::vulkan::VulkanPass {
+class MrtMeshPass final : public renderer::RenderPass {
 public:
     MrtMeshPass(TextureComputePass& texture_source, const std::filesystem::path& shader_path);
     ~MrtMeshPass() override;
 
     void applyFrameData(const RenderFrameData& frame_data);
     void setClearColor(const std::array<float, 4>& color) noexcept;
-    const renderer::vulkan::VulkanImage& colorOutput() const;
-    const renderer::vulkan::VulkanImage& auxiliaryOutput() const;
-    void prepare(renderer::vulkan::VulkanPassPrepareContext& context) override;
-    void record(renderer::vulkan::VulkanPassContext& context) override;
+    void prepare(renderer::RenderPassPrepareContext& context) override;
+    void record(renderer::RenderPassContext& context) override;
+
+    nvrhi::ITexture& colorOutput() const;
+    nvrhi::ITexture& auxiliaryOutput() const;
 
 private:
     struct Impl;

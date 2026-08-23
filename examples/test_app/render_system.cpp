@@ -21,24 +21,19 @@
 
 namespace arti::test_app {
 
-RenderSystem::RenderSystem(renderer::RenderDevice& render_device,
-                           core::Window& window,
-                           size_t render_slots,
-                           std::filesystem::path compute_shader_path,
-                           std::filesystem::path mesh_shader_path,
-                           std::filesystem::path composite_shader_path)
-    : m_render_device(render_device),
-      m_window(window),
-      m_compute_shader_path(std::move(compute_shader_path)),
-      m_mesh_shader_path(std::move(mesh_shader_path)),
-      m_composite_shader_path(std::move(composite_shader_path)),
-      m_frame_queue(render_slots)
-{}
+RenderSystem::RenderSystem(renderer::RenderDevice& render_device, core::Window& window,
+        size_t render_slots, std::filesystem::path compute_shader_path,
+        std::filesystem::path mesh_shader_path, std::filesystem::path composite_shader_path)
+        : m_render_device(render_device),
+          m_window(window),
+          m_compute_shader_path(std::move(compute_shader_path)),
+          m_mesh_shader_path(std::move(mesh_shader_path)),
+          m_composite_shader_path(std::move(composite_shader_path)),
+          m_frame_queue(render_slots) {}
 
 RenderSystem::~RenderSystem() = default;
 
-void RenderSystem::onAttach(scene::Scene& scene)
-{
+void RenderSystem::onAttach(scene::Scene& scene) {
     if (m_render_thread_started) {
         return;
     }
@@ -49,16 +44,14 @@ void RenderSystem::onAttach(scene::Scene& scene)
     m_render_thread_started = true;
 }
 
-void RenderSystem::onDetach(scene::Scene& scene)
-{
+void RenderSystem::onDetach(scene::Scene& scene) {
     m_shutdown_requested.store(true, std::memory_order_release);
     m_frame_queue.shutdown();
     core::TaskSystem::get().waitForPinnedTask();
     m_render_device.waitIdle();
 }
 
-void RenderSystem::onUpdate(scene::Scene& scene, const scene::UpdateContext& context)
-{
+void RenderSystem::onUpdate(scene::Scene& scene, const scene::UpdateContext& context) {
     m_elapsed_time += context.deltaTime.getSeconds();
 
     ensurePasses(scene);
@@ -78,12 +71,11 @@ void RenderSystem::onUpdate(scene::Scene& scene, const scene::UpdateContext& con
     const float aspect = static_cast<float>(m_window.getFramebufferWidth()) /
                          static_cast<float>(m_window.getFramebufferHeight());
     frame_data.projection =
-        glm::perspective(glm::radians(camera.fov), aspect, camera.near_plane, camera.far_plane);
-    frame_data.projection[1][1] *= -1.0f;
+            glm::perspective(glm::radians(camera.fov), aspect, camera.near_plane, camera.far_plane);
     frame_data.view = glm::inverse(camera_transform.getTransform());
 
-    for (auto [entity, transform, mesh, material] :
-         scene.view<scene::TransformComponent, MeshComponent, MaterialComponent>().each()) {
+    for (auto [entity, transform, mesh, material]:
+            scene.view<scene::TransformComponent, MeshComponent, MaterialComponent>().each()) {
         RenderDrawCommand draw;
         draw.vertex_buffer = mesh.mesh.vertexBufferPtr();
         draw.index_buffer = mesh.mesh.indexBufferPtr();
@@ -98,35 +90,32 @@ void RenderSystem::onUpdate(scene::Scene& scene, const scene::UpdateContext& con
     m_frame_queue.publish();
 }
 
-void RenderSystem::renderThreadLoop()
-{
+void RenderSystem::renderThreadLoop() {
     while (!m_shutdown_requested.load(std::memory_order_acquire)) {
         const RenderFrameData* frame_data = m_frame_queue.waitForNext();
         if (frame_data == nullptr) {
             break;
         }
         try {
-            const std::vector<renderer::vulkan::VulkanPass*> passes = snapshotPasses();
+            const std::vector<renderer::RenderPass*> passes = snapshotPasses();
             m_texture_compute_pass->applyFrameData(*frame_data);
             m_mrt_mesh_pass->applyFrameData(*frame_data);
             m_render_device.renderFrame(
-                std::span<renderer::vulkan::VulkanPass* const>{passes.data(), passes.size()});
+                    std::span<renderer::RenderPass* const>{ passes.data(), passes.size() });
         } catch (...) {
-            std::lock_guard lock{m_error_mutex};
+            std::lock_guard lock{ m_error_mutex };
             m_last_render_error = std::current_exception();
         }
         m_frame_queue.releaseReadSlot();
     }
 }
 
-std::vector<renderer::vulkan::VulkanPass*> RenderSystem::snapshotPasses()
-{
-    std::lock_guard lock{m_pass_mutex};
+std::vector<renderer::RenderPass*> RenderSystem::snapshotPasses() {
+    std::lock_guard lock{ m_pass_mutex };
     return m_passes;
 }
 
-void RenderSystem::ensurePasses(scene::Scene& scene)
-{
+void RenderSystem::ensurePasses(scene::Scene& scene) {
     if (m_passes_initialized) {
         return;
     }
@@ -136,13 +125,14 @@ void RenderSystem::ensurePasses(scene::Scene& scene)
         return;
     }
     const std::shared_ptr<renderer::Texture2D> texture =
-        materials.get<MaterialComponent>(materials.front()).material.texturePtr();
+            materials.get<MaterialComponent>(materials.front()).material.texturePtr();
     m_texture_compute_pass = std::make_unique<TextureComputePass>(texture, m_compute_shader_path);
     m_mrt_mesh_pass = std::make_unique<MrtMeshPass>(*m_texture_compute_pass, m_mesh_shader_path);
-    m_mrt_composite_pass = std::make_unique<MrtCompositePass>(*m_mrt_mesh_pass, m_composite_shader_path);
+    m_mrt_composite_pass =
+            std::make_unique<MrtCompositePass>(*m_mrt_mesh_pass, m_composite_shader_path);
 
-    std::lock_guard lock{m_pass_mutex};
-    std::vector<renderer::vulkan::VulkanPass*> external_passes = std::move(m_passes);
+    std::lock_guard lock{ m_pass_mutex };
+    std::vector<renderer::RenderPass*> external_passes = std::move(m_passes);
     m_passes = {
         m_texture_compute_pass.get(),
         m_mrt_mesh_pass.get(),
@@ -152,32 +142,25 @@ void RenderSystem::ensurePasses(scene::Scene& scene)
     m_passes_initialized = true;
 }
 
-void RenderSystem::prependPass(renderer::vulkan::VulkanPass* pass)
-{
-    std::lock_guard lock{m_pass_mutex};
+void RenderSystem::prependPass(renderer::RenderPass* pass) {
+    std::lock_guard lock{ m_pass_mutex };
     m_passes.erase(std::remove(m_passes.begin(), m_passes.end(), pass), m_passes.end());
     m_passes.insert(m_passes.begin(), pass);
 }
 
-void RenderSystem::removePass(renderer::vulkan::VulkanPass* pass) noexcept
-{
-    std::lock_guard lock{m_pass_mutex};
+void RenderSystem::removePass(renderer::RenderPass* pass) noexcept {
+    std::lock_guard lock{ m_pass_mutex };
     m_passes.erase(std::remove(m_passes.begin(), m_passes.end(), pass), m_passes.end());
 }
 
-void RenderSystem::waitForFrameComplete()
-{
-    m_frame_queue.waitUntilDrained();
-}
+void RenderSystem::waitForFrameComplete() { m_frame_queue.waitUntilDrained(); }
 
-std::exception_ptr RenderSystem::consumeRenderError()
-{
-    std::lock_guard lock{m_error_mutex};
+std::exception_ptr RenderSystem::consumeRenderError() {
+    std::lock_guard lock{ m_error_mutex };
     return std::exchange(m_last_render_error, {});
 }
 
-size_t RenderSystem::lastDrawCount() const noexcept
-{
+size_t RenderSystem::lastDrawCount() const noexcept {
     return m_last_draw_count.load(std::memory_order_acquire);
 }
 

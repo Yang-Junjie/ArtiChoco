@@ -1,6 +1,7 @@
 #pragma once
 #include "artichoco/core/window.h"
 #include "index_buffer.h"
+#include "render_pass.h"
 #include "texture_2d.h"
 #include "texture_cube.h"
 #include "vertex_buffer.h"
@@ -8,12 +9,13 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <array>
+#include <filesystem>
 #include <memory>
 #include <span>
 #include <string>
 
 namespace arti::renderer::vulkan {
-class VulkanPass;
 class VulkanSurfaceSource;
 } // namespace arti::renderer::vulkan
 
@@ -52,7 +54,10 @@ public:
     TextureCube createTextureCube(std::span<const TextureCubeMipData> mip_levels,
             TextureFormat format = TextureFormat::RGBA8Srgb);
 
-    bool renderFrame(std::span<vulkan::VulkanPass* const> passes);
+    bool renderFrame(std::span<RenderPass* const> passes);
+    bool renderNvrhiClearFrame(const std::array<float, 4>& clear_color);
+    bool nvrhiComputeShaderSmoke(const std::filesystem::path& source_path);
+    bool nvrhiResourceSmoke();
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
 

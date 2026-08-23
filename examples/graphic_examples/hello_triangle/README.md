@@ -1,17 +1,18 @@
 # Hello Triangle
 
-This example shows the smallest complete ArtiChoco graphics application:
+The minimal ArtiChoco graphics example. It uses the application/layer lifecycle,
+the backend-independent `RenderPass` API, NVRHI resources and command recording,
+the Vulkan presentation backend, and runtime Slang SPIR-V compilation with
+reflection.
 
-- `application.cpp` creates the windowed application and installs a layer.
-- `HelloTriangleLayer` owns the render device and follows the layer lifecycle.
-- `TriangleRenderer` creates the vertex buffer and submits the render pass.
-- `TrianglePass` compiles the Slang shader and records Vulkan draw commands.
+Build the repository, then run:
 
-Build from the repository root:
-
-```powershell
-cmake -S . -B build
-cmake --build build --target hello_triangle
+```text
+build/bin/hello_triangle.exe
 ```
 
-The executable is written under `build/bin` (with a configuration subdirectory for multi-config generators).
+For an automated three-frame run:
+
+```text
+build/bin/hello_triangle.exe --smoke
+```

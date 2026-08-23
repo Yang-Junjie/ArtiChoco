@@ -1,9 +1,9 @@
 #include "vertex_buffer.h"
 
 #include "detail/buffer_access.h"
-#include "vulkan/vulkan_allocator.h"
-#include "vulkan/vulkan_resource_state.h"
-#include "vulkan/vulkan_upload_context.h"
+#include "vulkan/nvrhi_resource_upload.h"
+
+#include <nvrhi/nvrhi.h>
 
 #include <cstring>
 #include <stdexcept>
@@ -46,19 +46,10 @@ void validateLayout(const VertexBufferLayout& layout)
 } // namespace
 
 struct VertexBuffer::Impl {
-    vulkan::AllocatedBuffer buffer;
-    detail::DeferredResourceOwnerPtr owner;
+    detail::ResourceOwnerPtr owner;
+    nvrhi::BufferHandle buffer;
     uint32_t vertex_count{0};
     VertexBufferLayout layout;
-
-    ~Impl()
-    {
-        if (owner && buffer.handle()) {
-            owner->deferRelease(std::packaged_task<void()>{
-                [resource = std::move(buffer)]() mutable { (void)resource; },
-            });
-        }
-    }
 };
 
 VertexBuffer::VertexBuffer(std::unique_ptr<Impl> impl) noexcept
@@ -80,9 +71,8 @@ const VertexBufferLayout& VertexBuffer::layout() const noexcept
 }
 
 VertexBuffer detail::BufferAccess::createVertexBuffer(
-    vulkan::VulkanAllocator& allocator,
-    vulkan::VulkanUploadContext& upload_context,
-    DeferredResourceOwnerPtr owner,
+    nvrhi::IDevice& device,
+    ResourceOwnerPtr owner,
     std::span<const std::byte> data,
     uint32_t vertex_count,
     VertexBufferLayout layout)
@@ -92,32 +82,25 @@ VertexBuffer detail::BufferAccess::createVertexBuffer(
         throw std::invalid_argument("Vertex buffer data does not match its count and stride.");
     }
 
-    vk::BufferCreateInfo buffer_info{};
-    buffer_info.setSize(data.size_bytes())
-        .setUsage(vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer)
-        .setSharingMode(vk::SharingMode::eExclusive);
-    VmaAllocationCreateInfo allocation_info{};
-    allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-
     auto impl = std::make_unique<VertexBuffer::Impl>();
-    impl->buffer = allocator.createBuffer(buffer_info, allocation_info);
+    nvrhi::BufferDesc buffer_desc;
+    buffer_desc.setByteSize(data.size_bytes())
+            .setDebugName("ArtiChoco VertexBuffer")
+            .setIsVertexBuffer(true);
+    impl->buffer = vulkan::createAndUploadNvrhiBuffer(
+            device, std::move(buffer_desc), data, nvrhi::ResourceStates::VertexBuffer);
     impl->owner = owner;
     impl->vertex_count = vertex_count;
     impl->layout = std::move(layout);
-    const vulkan::VulkanBufferState vertex_read{
-        vk::PipelineStageFlagBits2::eVertexAttributeInput,
-        vk::AccessFlagBits2::eVertexAttributeRead,
-    };
-    upload_context.uploadBuffer(data, impl->buffer.handle(), vertex_read);
     return VertexBuffer{std::move(impl)};
 }
 
-vk::Buffer detail::BufferAccess::handle(const VertexBuffer& buffer) noexcept
+nvrhi::IBuffer& detail::BufferAccess::nvrhiHandle(const VertexBuffer& buffer) noexcept
 {
-    return buffer.m_impl->buffer.handle();
+    return *buffer.m_impl->buffer;
 }
 
-bool detail::BufferAccess::isOwnedBy(const VertexBuffer& buffer, const DeferredResourceOwner* owner) noexcept
+bool detail::BufferAccess::isOwnedBy(const VertexBuffer& buffer, const ResourceOwner* owner) noexcept
 {
     return buffer.m_impl->owner.get() == owner;
 }

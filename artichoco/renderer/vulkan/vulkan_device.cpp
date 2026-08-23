@@ -55,9 +55,11 @@ bool supportsRenderingFeatures(const vk::raii::PhysicalDevice& device)
     const auto features = device.getFeatures2<
         vk::PhysicalDeviceFeatures2,
         vk::PhysicalDeviceVulkan11Features,
+        vk::PhysicalDeviceVulkan12Features,
         vk::PhysicalDeviceDynamicRenderingFeatures,
         vk::PhysicalDeviceSynchronization2Features>();
     return features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
+        features.get<vk::PhysicalDeviceVulkan12Features>().timelineSemaphore &&
         features.get<vk::PhysicalDeviceDynamicRenderingFeatures>().dynamicRendering &&
         features.get<vk::PhysicalDeviceSynchronization2Features>().synchronization2;
 }
@@ -76,6 +78,9 @@ bool supportsRenderingExtensions(const vk::raii::PhysicalDevice& device)
 
 uint64_t deviceScore(const vk::raii::PhysicalDevice& device, vk::SurfaceKHR surface)
 {
+    if (device.getProperties().apiVersion < VK_API_VERSION_1_3) {
+        return 0;
+    }
     const auto queues = findQueueFamilies(device, surface);
     if (!queues.graphics || !queues.present || !hasDeviceExtension(device, VK_KHR_SWAPCHAIN_EXTENSION_NAME) ||
         !supportsRenderingExtensions(device) || !supportsRenderingFeatures(device)) {
@@ -157,8 +162,10 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
     synchronization2.setSynchronization2(true);
     vk::PhysicalDeviceDynamicRenderingFeatures dynamic_rendering{};
     dynamic_rendering.setDynamicRendering(true).setPNext(&synchronization2);
+    vk::PhysicalDeviceVulkan12Features vulkan_12_features{};
+    vulkan_12_features.setTimelineSemaphore(true).setPNext(&dynamic_rendering);
     vk::PhysicalDeviceVulkan11Features vulkan_11_features{};
-    vulkan_11_features.setShaderDrawParameters(true).setPNext(&dynamic_rendering);
+    vulkan_11_features.setShaderDrawParameters(true).setPNext(&vulkan_12_features);
     vk::PhysicalDeviceFeatures enabled_features{};
     m_independent_blend_enabled = static_cast<bool>(m_physical_device.getFeatures().independentBlend);
     enabled_features.setIndependentBlend(m_independent_blend_enabled);
@@ -173,6 +180,7 @@ VulkanDevice::VulkanDevice(const vk::raii::Instance& instance, const vk::raii::S
     m_device = vk::raii::Device{m_physical_device, device_info};
     m_graphics_queue = vk::raii::Queue{m_device, m_graphics_queue_family, 0};
     m_present_queue = vk::raii::Queue{m_device, m_present_queue_family, 0};
+    m_enabled_extensions = extensions;
 
     const auto properties = m_physical_device.getProperties();
     getLogChannel().info(
@@ -211,6 +219,11 @@ uint32_t VulkanDevice::graphicsQueueFamily() const noexcept
 uint32_t VulkanDevice::presentQueueFamily() const noexcept
 {
     return m_present_queue_family;
+}
+
+std::span<const char* const> VulkanDevice::enabledExtensions() const noexcept
+{
+    return m_enabled_extensions;
 }
 
 bool VulkanDevice::usesCore13() const noexcept

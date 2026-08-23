@@ -61,7 +61,8 @@ std::vector<uint32_t> copySpirv(slang::IBlob& code, const char* stage) {
     return spirv;
 }
 
-ShaderResourceType reflectResourceType(slang::BindingType type) {
+ShaderResourceType reflectResourceType(slang::BindingType type,
+        slang::TypeLayoutReflection* leaf_type_layout) {
     switch (type) {
         case slang::BindingType::Sampler:
             return ShaderResourceType::Sampler;
@@ -72,9 +73,19 @@ ShaderResourceType reflectResourceType(slang::BindingType type) {
         case slang::BindingType::ConstantBuffer:
             return ShaderResourceType::UniformBuffer;
         case slang::BindingType::RawBuffer:
-            return ShaderResourceType::StorageBuffer;
+            if (leaf_type_layout != nullptr &&
+                    (static_cast<uint32_t>(leaf_type_layout->getResourceShape()) &
+                            SLANG_RESOURCE_BASE_SHAPE_MASK) == SLANG_STRUCTURED_BUFFER) {
+                return ShaderResourceType::StructuredBufferReadOnly;
+            }
+            return ShaderResourceType::StorageBufferReadOnly;
         case slang::BindingType::MutableRawBuffer:
-            return ShaderResourceType::StorageBuffer;
+            if (leaf_type_layout != nullptr &&
+                    (static_cast<uint32_t>(leaf_type_layout->getResourceShape()) &
+                            SLANG_RESOURCE_BASE_SHAPE_MASK) == SLANG_STRUCTURED_BUFFER) {
+                return ShaderResourceType::StructuredBufferReadWrite;
+            }
+            return ShaderResourceType::StorageBufferReadWrite;
         case slang::BindingType::TypedBuffer:
             return ShaderResourceType::UniformTexelBuffer;
         case slang::BindingType::MutableTypedBuffer:
@@ -109,6 +120,9 @@ ShaderReflection reflectProgram(slang::ProgramLayout& layout, ShaderStageMask st
                 continue;
             }
 
+            slang::TypeLayoutReflection* leaf_type_layout =
+                    type_layout->getBindingRangeLeafTypeLayout(range_index);
+
             const SlangInt reflected_count = type_layout->getBindingRangeBindingCount(range_index);
             if (reflected_count <= 0 ||
                     static_cast<size_t>(reflected_count) == SLANG_UNBOUNDED_SIZE ||
@@ -119,7 +133,7 @@ ShaderReflection reflectProgram(slang::ProgramLayout& layout, ShaderStageMask st
             }
             reflection.bindings.push_back({
                 parameter->getName(),
-                reflectResourceType(binding_type),
+                reflectResourceType(binding_type, leaf_type_layout),
                 parameter->getBindingSpace(),
                 parameter->getBindingIndex(),
                 static_cast<uint32_t>(reflected_count),
@@ -163,7 +177,9 @@ struct CompileContext {
     Slang::ComPtr<slang::IModule> module;
 };
 
-CompileContext createCompileContext(const std::filesystem::path& source_path) {
+CompileContext createCompileContext(std::string_view module_name_view,
+        std::string_view source_name_view, std::string_view source,
+        const std::filesystem::path& search_path) {
     GlobalCompileState& global_state = globalCompileState();
     CompileContext context;
     context.lock = std::unique_lock{ global_state.mutex };
@@ -177,8 +193,8 @@ CompileContext createCompileContext(const std::filesystem::path& source_path) {
         throw std::runtime_error("Slang does not provide the spirv_1_6 profile.");
     }
 
-    const std::string search_path = source_path.parent_path().string();
-    const char* search_paths[] = { search_path.c_str() };
+    const std::string search_path_string = search_path.string();
+    const char* search_paths[] = { search_path_string.c_str() };
     slang::SessionDesc session_desc{};
     session_desc.targets = &target_desc;
     session_desc.targetCount = 1;
@@ -190,17 +206,72 @@ CompileContext createCompileContext(const std::filesystem::path& source_path) {
             context.global_session->createSession(session_desc, context.session.writeRef()),
             "IGlobalSession::createSession");
 
-    const std::string source = readSource(source_path);
-    const std::string module_name = source_path.stem().string();
-    const std::string source_name = source_path.string();
+    const std::string module_name{module_name_view};
+    const std::string source_name{source_name_view};
     Slang::ComPtr<slang::IBlob> diagnostics;
+    const std::string source_string{source};
     context.module = context.session->loadModuleFromSourceString(module_name.c_str(),
-            source_name.c_str(), source.c_str(), diagnostics.writeRef());
+            source_name.c_str(), source_string.c_str(), diagnostics.writeRef());
     reportDiagnostics(diagnostics, context.module.get() == nullptr);
     if (!context.module) {
-        throw std::runtime_error("Slang failed to load shader module: " + source_path.string());
+        throw std::runtime_error("Slang failed to load shader module: " + source_name);
     }
     return context;
+}
+
+CompileContext createCompileContext(const std::filesystem::path& source_path) {
+    const std::string source = readSource(source_path);
+    return createCompileContext(source_path.stem().string(), source_path.string(), source,
+            source_path.parent_path());
+}
+
+CompiledComputeProgram compileComputeFromContext(CompileContext& context,
+        std::string_view compute_entry_point, std::string_view log_name) {
+    Slang::ComPtr<slang::IBlob> diagnostics;
+    Slang::ComPtr<slang::IEntryPoint> compute_entry;
+    diagnostics.setNull();
+    const std::string entry_point{compute_entry_point};
+    checkSlangResult(context.module->findEntryPointByName(entry_point.c_str(),
+                             compute_entry.writeRef()),
+            "IModule::findEntryPointByName(compute)");
+
+    slang::IComponentType* components[] = { context.module.get(), compute_entry.get() };
+    Slang::ComPtr<slang::IComponentType> composite;
+    diagnostics.setNull();
+    checkSlangResult(context.session->createCompositeComponentType(components, 2,
+                             composite.writeRef(), diagnostics.writeRef()),
+            "ISession::createCompositeComponentType(compute)", diagnostics);
+
+    Slang::ComPtr<slang::IComponentType> linked_program;
+    diagnostics.setNull();
+    checkSlangResult(composite->link(linked_program.writeRef(), diagnostics.writeRef()),
+            "IComponentType::link(compute)", diagnostics);
+
+    Slang::ComPtr<slang::IBlob> compute_code;
+    diagnostics.setNull();
+    checkSlangResult(linked_program->getEntryPointCode(0, 0, compute_code.writeRef(),
+                             diagnostics.writeRef()),
+            "IComponentType::getEntryPointCode(compute)", diagnostics);
+
+    diagnostics.setNull();
+    slang::ProgramLayout* layout = linked_program->getLayout(0, diagnostics.writeRef());
+    reportDiagnostics(diagnostics, layout == nullptr);
+    if (layout == nullptr || layout->getEntryPointCount() != 1) {
+        throw std::runtime_error("Slang failed to reflect the compute program.");
+    }
+
+    SlangUInt group_size[3] = { 1, 1, 1 };
+    layout->getEntryPointByIndex(0)->getComputeThreadGroupSize(3, group_size);
+    CompiledComputeProgram program;
+    program.compute.entry_point = "main";
+    program.compute.spirv = copySpirv(*compute_code, "compute");
+    program.reflection = reflectProgram(*layout, ShaderStageMask::Compute);
+    program.thread_group_size_x = static_cast<uint32_t>(group_size[0]);
+    program.thread_group_size_y = static_cast<uint32_t>(group_size[1]);
+    program.thread_group_size_z = static_cast<uint32_t>(group_size[2]);
+    logReflection(program.reflection);
+    getLogChannel().info("Compiled Slang compute shader '{}' to SPIR-V", log_name);
+    return program;
 }
 
 } // namespace
@@ -273,51 +344,18 @@ CompiledComputeProgram SlangCompiler::compileCompute(const ComputeShaderCompileI
     }
 
     CompileContext context = createCompileContext(info.source_path);
+    return compileComputeFromContext(context, info.compute_entry_point,
+            info.source_path.string());
+}
 
-    Slang::ComPtr<slang::IBlob> diagnostics;
-    Slang::ComPtr<slang::IEntryPoint> compute_entry;
-    diagnostics.setNull();
-    checkSlangResult(context.module->findEntryPointByName(info.compute_entry_point.c_str(),
-                             compute_entry.writeRef()),
-            "IModule::findEntryPointByName(compute)");
-
-    slang::IComponentType* components[] = { context.module.get(), compute_entry.get() };
-    Slang::ComPtr<slang::IComponentType> composite;
-    diagnostics.setNull();
-    checkSlangResult(context.session->createCompositeComponentType(components, 2,
-                             composite.writeRef(), diagnostics.writeRef()),
-            "ISession::createCompositeComponentType(compute)", diagnostics);
-
-    Slang::ComPtr<slang::IComponentType> linked_program;
-    diagnostics.setNull();
-    checkSlangResult(composite->link(linked_program.writeRef(), diagnostics.writeRef()),
-            "IComponentType::link(compute)", diagnostics);
-
-    Slang::ComPtr<slang::IBlob> compute_code;
-    diagnostics.setNull();
-    checkSlangResult(linked_program->getEntryPointCode(0, 0, compute_code.writeRef(),
-                             diagnostics.writeRef()),
-            "IComponentType::getEntryPointCode(compute)", diagnostics);
-
-    diagnostics.setNull();
-    slang::ProgramLayout* layout = linked_program->getLayout(0, diagnostics.writeRef());
-    reportDiagnostics(diagnostics, layout == nullptr);
-    if (layout == nullptr || layout->getEntryPointCount() != 1) {
-        throw std::runtime_error("Slang failed to reflect the compute program.");
+CompiledComputeProgram SlangCompiler::compileComputeSource(std::string_view source,
+        std::string_view source_name, std::string_view compute_entry_point) {
+    if (source.empty() || source_name.empty() || compute_entry_point.empty()) {
+        throw std::invalid_argument("Inline Slang compute source requires source, name, and entry point.");
     }
-
-    SlangUInt group_size[3] = { 1, 1, 1 };
-    layout->getEntryPointByIndex(0)->getComputeThreadGroupSize(3, group_size);
-    CompiledComputeProgram program;
-    program.compute.entry_point = "main";
-    program.compute.spirv = copySpirv(*compute_code, "compute");
-    program.reflection = reflectProgram(*layout, ShaderStageMask::Compute);
-    program.thread_group_size_x = static_cast<uint32_t>(group_size[0]);
-    program.thread_group_size_y = static_cast<uint32_t>(group_size[1]);
-    program.thread_group_size_z = static_cast<uint32_t>(group_size[2]);
-    logReflection(program.reflection);
-    getLogChannel().info("Compiled Slang compute shader '{}' to SPIR-V", info.source_path.string());
-    return program;
+    const std::filesystem::path search_path = std::filesystem::current_path();
+    CompileContext context = createCompileContext(source_name, source_name, source, search_path);
+    return compileComputeFromContext(context, compute_entry_point, source_name);
 }
 
 } // namespace arti::renderer

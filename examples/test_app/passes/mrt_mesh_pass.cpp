@@ -1,29 +1,13 @@
+#include "mrt_mesh_pass.h"
+
 #include "artichoco/renderer/index_buffer.h"
 #include "artichoco/renderer/slang_compiler.h"
 #include "artichoco/renderer/vertex_buffer.h"
-#include "artichoco/renderer/vulkan/vulkan_binding_layout.h"
-#include "artichoco/renderer/vulkan/vulkan_binding_set.h"
-#include "artichoco/renderer/vulkan/vulkan_buffer.h"
-#include "artichoco/renderer/vulkan/vulkan_depth_buffer.h"
-#include "artichoco/renderer/vulkan/vulkan_device.h"
-#include "artichoco/renderer/vulkan/vulkan_frame_manager.h"
-#include "artichoco/renderer/vulkan/vulkan_image.h"
-#include "artichoco/renderer/vulkan/vulkan_pass_context.h"
-#include "artichoco/renderer/vulkan/vulkan_pipeline.h"
-#include "artichoco/renderer/vulkan/vulkan_pipeline_cache.h"
-#include "artichoco/renderer/vulkan/vulkan_resource_state.h"
-#include "artichoco/renderer/vulkan/vulkan_shader.h"
-#include "artichoco/renderer/vulkan/vulkan_upload_context.h"
-#include "mrt_mesh_pass.h"
+#include "artichoco/renderer/vulkan/nvrhi_shader_factory.h"
 
-#include <cstddef>
-
-#include <algorithm>
 #include <array>
-#include <cstddef>
 #include <cstring>
 #include <glm/gtc/type_ptr.hpp>
-#include <span>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -31,17 +15,6 @@
 
 namespace arti::test_app {
 namespace {
-
-vk::IndexType toVulkanIndexType(renderer::IndexType type)
-{
-    switch (type) {
-        case renderer::IndexType::UInt16:
-            return vk::IndexType::eUint16;
-        case renderer::IndexType::UInt32:
-            return vk::IndexType::eUint32;
-    }
-    throw std::invalid_argument("Unsupported index type.");
-}
 
 struct MeshFrameUniforms {
     std::array<float, 16> model_view_projection;
@@ -51,282 +24,261 @@ struct MeshFrameUniforms {
 static_assert(std::is_standard_layout_v<MeshFrameUniforms>);
 static_assert(sizeof(MeshFrameUniforms) == sizeof(float) * 20);
 
-constexpr std::array<float, 4> meshMaterialData = {1.0f, 0.94f, 0.86f, 1.0f};
+constexpr std::array<float, 4> meshMaterialData = { 1.0f, 0.94f, 0.86f, 1.0f };
 
-bool supportsColorAttachmentSampling(const renderer::vulkan::VulkanDevice& device, vk::Format format)
-{
-    const vk::FormatFeatureFlags required =
-        vk::FormatFeatureFlagBits::eColorAttachment | vk::FormatFeatureFlagBits::eSampledImage;
-    const auto properties = device.physicalDevice().getFormatProperties(format);
-    return (properties.optimalTilingFeatures & required) == required;
-}
-
-vk::Format chooseAuxiliaryFormat(const renderer::vulkan::VulkanDevice& device)
-{
-    constexpr std::array candidates = {
-        vk::Format::eR16G16B16A16Sfloat,
-        vk::Format::eR8G8B8A8Unorm,
-    };
-    for (const vk::Format format : candidates) {
-        if (supportsColorAttachmentSampling(device, format)) {
-            return format;
-        }
+nvrhi::Format toNvrhiVertexFormat(renderer::VertexAttributeType type) {
+    switch (type) {
+        case renderer::VertexAttributeType::Float2:
+            return nvrhi::Format::RG32_FLOAT;
+        case renderer::VertexAttributeType::Float3:
+            return nvrhi::Format::RGB32_FLOAT;
+        case renderer::VertexAttributeType::Float4:
+            return nvrhi::Format::RGBA32_FLOAT;
     }
-    throw std::runtime_error("The Vulkan device exposes no sampled color format for the MRT auxiliary output.");
+    throw std::invalid_argument("Unsupported NVRHI vertex attribute type.");
 }
 
-vk::PipelineColorBlendAttachmentState opaqueColorBlend() noexcept
-{
-    vk::PipelineColorBlendAttachmentState blend;
-    blend.setBlendEnable(false).setColorWriteMask(vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                                                  vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
-    return blend;
+nvrhi::Format toNvrhiIndexFormat(renderer::IndexType type) {
+    switch (type) {
+        case renderer::IndexType::UInt16:
+            return nvrhi::Format::R16_UINT;
+        case renderer::IndexType::UInt32:
+            return nvrhi::Format::R32_UINT;
+    }
+    throw std::invalid_argument("Unsupported NVRHI index type.");
+}
+
+const char* semanticName(uint32_t location) {
+    switch (location) {
+        case 0:
+            return "POSITION";
+        case 1:
+            return "TEXCOORD0";
+        default:
+            throw std::invalid_argument("MrtMeshPass supports POSITION and TEXCOORD0 only.");
+    }
 }
 
 } // namespace
 
 struct MrtMeshPass::Impl {
     Impl(TextureComputePass& texture_source, std::filesystem::path shader_path)
-        : texture_source(&texture_source),
-          shader_path(std::move(shader_path))
-    {}
+            : texture_source(&texture_source),
+              shader_path(std::move(shader_path)) {}
 
-    void initialize(renderer::vulkan::VulkanPassPrepareContext& context)
-    {
-        if (shader) {
-            return;
-        }
-
-        auto program = renderer::SlangCompiler::compileGraphics({shader_path});
-        binding_layout = std::make_unique<renderer::vulkan::VulkanBindingLayout>(context.device(), program.reflection);
-        shader = std::make_unique<renderer::vulkan::VulkanShader>(context.device(), std::move(program));
-        if (binding_layout->pushConstantRanges().empty()) {
-            throw std::invalid_argument("The mesh shader requires push constants.");
-        }
-
-        binding_sets.reserve(context.frameSlotCount());
-        for (size_t index = 0; index < context.frameSlotCount(); ++index) {
-            binding_sets.emplace_back(context.device(), context.descriptorAllocator(), *binding_layout);
-        }
-
-        renderer::vulkan::VulkanBufferCreateInfo material_buffer_info;
-        material_buffer_info.size = sizeof(meshMaterialData);
-        material_buffer_info.usage = vk::BufferUsageFlagBits::eStorageBuffer;
-        material_buffer_info.memory = renderer::vulkan::VulkanBufferMemory::DeviceLocal;
-        material_buffer = std::make_unique<renderer::vulkan::VulkanBuffer>(context.allocator(), material_buffer_info);
-        const renderer::vulkan::VulkanBufferState fragment_storage_read{
-            vk::PipelineStageFlagBits2::eFragmentShader,
-            vk::AccessFlagBits2::eShaderStorageRead,
-        };
-        material_buffer->uploadInitial(
-            context.uploadContext(), std::as_bytes(std::span{meshMaterialData}), fragment_storage_read);
-
-        for (size_t index = 0; index < binding_sets.size(); ++index) {
-            binding_sets[index].writeStorageBuffer("material_data", *material_buffer);
-        }
-        base_color_sampler = renderer::vulkan::VulkanSampler{context.device()};
-        device = &context.device();
-    }
-
-    void ensureAttachments(renderer::vulkan::VulkanPassPrepareContext& context)
-    {
-        const vk::Extent2D required_extent = texture_source->output().extent();
-        if (color_output && color_output->extent() == required_extent) {
-            return;
-        }
-        if (color_output) {
-            context.device().device().waitIdle();
-        }
-
-        constexpr vk::Format color_format = vk::Format::eR8G8B8A8Unorm;
-        if (!supportsColorAttachmentSampling(context.device(), color_format)) {
-            throw std::runtime_error("The Vulkan device does not support the MRT color output format.");
-        }
-
-        renderer::vulkan::VulkanImageCreateInfo image_info;
-        image_info.extent = required_extent;
-        image_info.usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled;
-        image_info.format = color_format;
-
-        color_output =
-            std::make_unique<renderer::vulkan::VulkanImage>(context.device(), context.allocator(), image_info);
-
-        image_info.format = chooseAuxiliaryFormat(context.device());
-        auxiliary_output =
-            std::make_unique<renderer::vulkan::VulkanImage>(context.device(), context.allocator(), image_info);
-
-        depth_buffer = std::make_unique<renderer::vulkan::VulkanDepthBuffer>(
-            context.device(), context.allocator(), required_extent);
-        pipeline = nullptr;
-        outputs_initialized = false;
-        depth_initialized = false;
-    }
-
-    TextureComputePass* texture_source{nullptr};
+    TextureComputePass* texture_source{ nullptr };
     std::filesystem::path shader_path;
-    const renderer::vulkan::VulkanDevice* device{nullptr};
-    std::unique_ptr<renderer::vulkan::VulkanShader> shader;
-    std::unique_ptr<renderer::vulkan::VulkanBindingLayout> binding_layout;
-    const renderer::vulkan::VulkanPipeline* pipeline{nullptr};
-    renderer::vulkan::VulkanSampler base_color_sampler;
-    std::unique_ptr<renderer::vulkan::VulkanImage> color_output;
-    std::unique_ptr<renderer::vulkan::VulkanImage> auxiliary_output;
-    std::unique_ptr<renderer::vulkan::VulkanDepthBuffer> depth_buffer;
-    std::unique_ptr<renderer::vulkan::VulkanBuffer> material_buffer;
-    std::vector<renderer::vulkan::VulkanBindingSet> binding_sets;
-    const RenderFrameData* frame_data{nullptr};
-    std::array<float, 4> clear_color{0.04f, 0.08f, 0.12f, 1.0f};
-    bool outputs_initialized{false};
-    bool depth_initialized{false};
+    const RenderFrameData* frame_data{ nullptr };
+    std::array<float, 4> clear_color{ 0.04f, 0.08f, 0.12f, 1.0f };
+
+    renderer::ShaderReflection reflection;
+    nvrhi::ShaderHandle vertex_shader;
+    nvrhi::ShaderHandle pixel_shader;
+    nvrhi::BindingLayoutHandle binding_layout;
+    nvrhi::BindingSetHandle binding_set;
+    nvrhi::InputLayoutHandle input_layout;
+    nvrhi::GraphicsPipelineHandle pipeline;
+    nvrhi::SamplerHandle sampler;
+    nvrhi::BufferHandle material_buffer;
+    nvrhi::TextureHandle color_output;
+    nvrhi::TextureHandle auxiliary_output;
+    nvrhi::TextureHandle depth_buffer;
+    nvrhi::FramebufferHandle framebuffer;
 };
 
-MrtMeshPass::MrtMeshPass(TextureComputePass& texture_source, const std::filesystem::path& shader_path)
-    : m_impl(std::make_unique<Impl>(texture_source, shader_path))
-{}
+MrtMeshPass::MrtMeshPass(TextureComputePass& texture_source,
+        const std::filesystem::path& shader_path)
+        : m_impl(std::make_unique<Impl>(texture_source, shader_path)) {}
 
 MrtMeshPass::~MrtMeshPass() = default;
 
-void MrtMeshPass::applyFrameData(const RenderFrameData& frame_data)
-{
+void MrtMeshPass::applyFrameData(const RenderFrameData& frame_data) {
     m_impl->frame_data = &frame_data;
 }
 
-void MrtMeshPass::setClearColor(const std::array<float, 4>& color) noexcept
-{
+void MrtMeshPass::setClearColor(const std::array<float, 4>& color) noexcept {
     m_impl->clear_color = color;
 }
 
-const renderer::vulkan::VulkanImage& MrtMeshPass::colorOutput() const
-{
+void MrtMeshPass::prepare(renderer::RenderPassPrepareContext& context) {
+    if (!m_impl->texture_source) {
+        throw std::logic_error("MrtMeshPass requires a texture source.");
+    }
+    if (!m_impl->binding_layout) {
+        const renderer::CompiledGraphicsProgram program =
+                renderer::SlangCompiler::compileGraphics({ m_impl->shader_path });
+        const auto shaders = renderer::vulkan::createNvrhiGraphicsShaderSet(context.device(),
+                program, "ArtiChoco NVRHI MRT mesh");
+        if (shaders.binding_layouts.empty() || !shaders.binding_layouts.front()) {
+            throw std::runtime_error("MrtMeshPass shader has no NVRHI binding layout.");
+        }
+        m_impl->vertex_shader = shaders.vertex_shader;
+        m_impl->pixel_shader = shaders.pixel_shader;
+        m_impl->binding_layout = shaders.binding_layouts.front();
+        m_impl->reflection = program.reflection;
+
+        nvrhi::BufferDesc material_desc;
+        material_desc.setByteSize(sizeof(meshMaterialData))
+                .setStructStride(sizeof(float) * 4)
+                .setDebugName("ArtiChoco NVRHI MRT material")
+                .enableAutomaticStateTracking(nvrhi::ResourceStates::ShaderResource);
+        m_impl->material_buffer = context.device().createBuffer(material_desc);
+        m_impl->sampler = context.device().createSampler(nvrhi::SamplerDesc{});
+        if (!m_impl->material_buffer || !m_impl->sampler) {
+            throw std::runtime_error("NVRHI failed to create MRT mesh resources.");
+        }
+    }
+
+    auto& source = m_impl->texture_source->output();
+    const uint32_t width = source.getDesc().width;
+    const uint32_t height = source.getDesc().height;
+    const bool size_changed = !m_impl->color_output ||
+                              m_impl->color_output->getDesc().width != width ||
+                              m_impl->color_output->getDesc().height != height;
+    if (size_changed) {
+        nvrhi::TextureDesc color_desc;
+        color_desc.setWidth(width)
+                .setHeight(height)
+                .setFormat(nvrhi::Format::RGBA8_UNORM)
+                .setIsRenderTarget(true)
+                .setDebugName("ArtiChoco NVRHI MRT color")
+                .enableAutomaticStateTracking(nvrhi::ResourceStates::ShaderResource);
+        nvrhi::TextureDesc auxiliary_desc = color_desc;
+        auxiliary_desc.setFormat(nvrhi::Format::RGBA16_FLOAT)
+                .setDebugName("ArtiChoco NVRHI MRT auxiliary");
+        nvrhi::TextureDesc depth_desc;
+        depth_desc.setWidth(width)
+                .setHeight(height)
+                .setFormat(nvrhi::Format::D32)
+                .setIsRenderTarget(true)
+                .setDebugName("ArtiChoco NVRHI MRT depth")
+                .enableAutomaticStateTracking(nvrhi::ResourceStates::DepthWrite);
+
+        m_impl->color_output = context.device().createTexture(color_desc);
+        m_impl->auxiliary_output = context.device().createTexture(auxiliary_desc);
+        m_impl->depth_buffer = context.device().createTexture(depth_desc);
+        if (!m_impl->color_output || !m_impl->auxiliary_output || !m_impl->depth_buffer) {
+            throw std::runtime_error("NVRHI failed to create MRT attachments.");
+        }
+        nvrhi::FramebufferDesc framebuffer_desc;
+        framebuffer_desc.addColorAttachment(m_impl->color_output)
+                .addColorAttachment(m_impl->auxiliary_output)
+                .setDepthAttachment(m_impl->depth_buffer);
+        m_impl->framebuffer = context.device().createFramebuffer(framebuffer_desc);
+        if (!m_impl->framebuffer) {
+            throw std::runtime_error("NVRHI failed to create the MRT framebuffer.");
+        }
+        m_impl->pipeline = nullptr;
+        m_impl->input_layout = nullptr;
+    }
+
+    const std::array resources = {
+        renderer::vulkan::NvrhiBindingResource::Buffer("material_data", *m_impl->material_buffer),
+        renderer::vulkan::NvrhiBindingResource::Texture("base_color_texture", source),
+        renderer::vulkan::NvrhiBindingResource::Sampler("base_color_sampler", *m_impl->sampler),
+    };
+    m_impl->binding_set = renderer::vulkan::createNvrhiBindingSet(context.device(),
+            m_impl->reflection, 0, *m_impl->binding_layout, resources);
+}
+
+void MrtMeshPass::record(renderer::RenderPassContext& context) {
+    if (!m_impl->frame_data || m_impl->frame_data->draws.empty()) {
+        return;
+    }
+    const auto& frame_data = *m_impl->frame_data;
+    const auto& framebuffer_info = m_impl->framebuffer->getFramebufferInfo();
+    auto& commands = context.commands();
+    commands.clearTextureFloat(m_impl->color_output, nvrhi::AllSubresources,
+            nvrhi::Color{ m_impl->clear_color[0], m_impl->clear_color[1], m_impl->clear_color[2],
+                m_impl->clear_color[3] });
+    commands.clearTextureFloat(m_impl->auxiliary_output, nvrhi::AllSubresources,
+            nvrhi::Color{ 0.08f, 0.12f, 0.16f, 1.0f });
+    commands.clearDepthStencilTexture(m_impl->depth_buffer, nvrhi::AllSubresources, true, 1.0f,
+            false, 0);
+    commands.writeBuffer(m_impl->material_buffer, meshMaterialData.data(),
+            sizeof(meshMaterialData));
+
+    for (const auto& draw: frame_data.draws) {
+        if (!draw.vertex_buffer || !draw.index_buffer) {
+            continue;
+        }
+        if (!m_impl->pipeline) {
+            const auto& layout = draw.vertex_buffer->layout();
+            std::vector<nvrhi::VertexAttributeDesc> attributes;
+            attributes.reserve(layout.attributes.size());
+            for (const auto& attribute: layout.attributes) {
+                nvrhi::VertexAttributeDesc desc;
+                desc.setName(semanticName(attribute.location))
+                        .setFormat(toNvrhiVertexFormat(attribute.type))
+                        .setBufferIndex(0)
+                        .setOffset(attribute.offset)
+                        .setElementStride(layout.stride);
+                attributes.push_back(desc);
+            }
+            m_impl->input_layout = context.device().createInputLayout(attributes.data(),
+                    attributes.size(), m_impl->vertex_shader);
+            if (!m_impl->input_layout) {
+                throw std::runtime_error("NVRHI failed to create the MRT mesh input layout.");
+            }
+
+            nvrhi::DepthStencilState depth_state;
+            depth_state.enableDepthTest().enableDepthWrite().disableStencil();
+            nvrhi::RasterState raster_state;
+            raster_state.setCullBack().setFrontCounterClockwise(true);
+            nvrhi::RenderState render_state;
+            render_state.setDepthStencilState(depth_state).setRasterState(raster_state);
+            nvrhi::GraphicsPipelineDesc pipeline_desc;
+            pipeline_desc.setPrimType(nvrhi::PrimitiveType::TriangleList)
+                    .setInputLayout(m_impl->input_layout)
+                    .setVertexShader(m_impl->vertex_shader)
+                    .setPixelShader(m_impl->pixel_shader)
+                    .setRenderState(render_state)
+                    .addBindingLayout(m_impl->binding_layout);
+            m_impl->pipeline =
+                    context.device().createGraphicsPipeline(pipeline_desc, framebuffer_info);
+            if (!m_impl->pipeline) {
+                throw std::runtime_error("NVRHI failed to create the MRT mesh pipeline.");
+            }
+        }
+
+        MeshFrameUniforms frame_uniforms{};
+        const glm::mat4 mvp = frame_data.projection * frame_data.view * draw.model_matrix;
+        std::memcpy(frame_uniforms.model_view_projection.data(), glm::value_ptr(mvp),
+                sizeof(frame_uniforms.model_view_projection));
+        frame_uniforms.tint = { 1.0f, 1.0f, 1.0f, 1.0f };
+
+        nvrhi::ViewportState viewport;
+        viewport.addViewportAndScissorRect(framebuffer_info.getViewport());
+        nvrhi::GraphicsState state;
+        state.setPipeline(m_impl->pipeline)
+                .setFramebuffer(m_impl->framebuffer)
+                .setViewport(viewport)
+                .addBindingSet(m_impl->binding_set)
+                .addVertexBuffer(nvrhi::VertexBufferBinding()
+                                .setBuffer(&context.buffer(*draw.vertex_buffer))
+                                .setSlot(0))
+                .setIndexBuffer(nvrhi::IndexBufferBinding()
+                                .setBuffer(&context.buffer(*draw.index_buffer))
+                                .setFormat(toNvrhiIndexFormat(draw.index_buffer->indexType())));
+        commands.setGraphicsState(state);
+        commands.setPushConstants(&frame_uniforms, sizeof(frame_uniforms));
+        commands.drawIndexed(
+                nvrhi::DrawArguments{}.setVertexCount(draw.index_buffer->indexCount()));
+    }
+}
+
+nvrhi::ITexture& MrtMeshPass::colorOutput() const {
     if (!m_impl->color_output) {
-        throw std::logic_error("MrtMeshPass must be prepared before its color output is used.");
+        throw std::logic_error("MrtMeshPass color output is not initialized.");
     }
     return *m_impl->color_output;
 }
 
-const renderer::vulkan::VulkanImage& MrtMeshPass::auxiliaryOutput() const
-{
+nvrhi::ITexture& MrtMeshPass::auxiliaryOutput() const {
     if (!m_impl->auxiliary_output) {
-        throw std::logic_error("MrtMeshPass must be prepared before its auxiliary output is used.");
+        throw std::logic_error("MrtMeshPass auxiliary output is not initialized.");
     }
     return *m_impl->auxiliary_output;
-}
-
-void MrtMeshPass::prepare(renderer::vulkan::VulkanPassPrepareContext& context)
-{
-    m_impl->initialize(context);
-    m_impl->ensureAttachments(context);
-}
-
-void MrtMeshPass::record(renderer::vulkan::VulkanPassContext& context)
-{
-    auto& frame = context.frame();
-    if (m_impl->frame_data == nullptr) {
-        throw std::logic_error("MrtMeshPass reqnuiuires frame data before recording.");
-    }
-    const auto& frame_data = *m_impl->frame_data;
-    if (frame_data.draws.empty()) {
-        return;
-    }
-    const auto& texture = m_impl->texture_source->output();
-    const std::array color_formats = {m_impl->color_output->format(), m_impl->auxiliary_output->format()};
-
-    auto& bindings = m_impl->binding_sets.at(frame.frameSlotIndex());
-    bindings.writeSampledImage("base_color_texture", *texture.imageView());
-    bindings.writeSampler("base_color_sampler", *m_impl->base_color_sampler.handle());
-
-    const auto previous_output_state = m_impl->outputs_initialized
-            ? renderer::vulkan::fragmentSampledReadState()
-            : renderer::vulkan::undefinedImageState();
-    const auto previous_depth_state = m_impl->depth_initialized
-            ? renderer::vulkan::depthAttachmentReadWriteState()
-            : renderer::vulkan::undefinedImageState();
-    const auto to_color_attachment = renderer::vulkan::makeImageBarrier(
-        m_impl->color_output->image(), vk::ImageAspectFlagBits::eColor, previous_output_state,
-        renderer::vulkan::colorAttachmentWriteState());
-    const auto to_auxiliary_attachment = renderer::vulkan::makeImageBarrier(
-        m_impl->auxiliary_output->image(), vk::ImageAspectFlagBits::eColor, previous_output_state,
-        renderer::vulkan::colorAttachmentWriteState());
-    const auto to_depth_attachment = renderer::vulkan::makeImageBarrier(
-        m_impl->depth_buffer->image(), vk::ImageAspectFlagBits::eDepth, previous_depth_state,
-        renderer::vulkan::depthAttachmentReadWriteState());
-    const std::array attachment_barriers = {
-        to_color_attachment,
-        to_auxiliary_attachment,
-        to_depth_attachment,
-    };
-
-    auto& commands = context.commands();
-    commands.pipelineBarrier({}, {}, attachment_barriers);
-    std::array<vk::RenderingAttachmentInfo, 2> color_attachments;
-    color_attachments[0]
-        .setImageView(*m_impl->color_output->imageView())
-        .setImageLayout(vk::ImageLayout::eColorAttachmentOptimal)
-        .setLoadOp(vk::AttachmentLoadOp::eClear)
-        .setStoreOp(vk::AttachmentStoreOp::eStore)
-        .setClearValue(vk::ClearValue{vk::ClearColorValue{m_impl->clear_color}});
-    color_attachments[1]
-        .setImageView(*m_impl->auxiliary_output->imageView())
-        .setImageLayout(vk::ImageLayout::eColorAttachmentOptimal)
-        .setLoadOp(vk::AttachmentLoadOp::eClear)
-        .setStoreOp(vk::AttachmentStoreOp::eStore)
-        .setClearValue(vk::ClearValue{vk::ClearColorValue{std::array{0.08f, 0.12f, 0.16f, 1.0f}}});
-    vk::RenderingAttachmentInfo depth_attachment{};
-    depth_attachment.setImageView(*m_impl->depth_buffer->imageView())
-        .setImageLayout(vk::ImageLayout::eDepthAttachmentOptimal)
-        .setLoadOp(vk::AttachmentLoadOp::eClear)
-        .setStoreOp(vk::AttachmentStoreOp::eDontCare)
-        .setClearValue(vk::ClearValue{vk::ClearDepthStencilValue{1.0f, 0}});
-    vk::RenderingInfo rendering_info{};
-    rendering_info.setRenderArea(vk::Rect2D{{0, 0}, m_impl->color_output->extent()})
-        .setLayerCount(1)
-        .setColorAttachments(color_attachments)
-        .setPDepthAttachment(&depth_attachment);
-
-    commands.beginRendering(rendering_info);
-    commands.setViewportAndScissor(m_impl->color_output->extent());
-
-    const vk::ShaderStageFlags push_constant_stages =
-        m_impl->binding_layout->pushConstantRanges().front().stageFlags;
-    for (const auto& draw : frame_data.draws) {
-        if (!draw.vertex_buffer || !draw.index_buffer) {
-            continue;
-        }
-        const auto& layout = draw.vertex_buffer->layout();
-        renderer::vulkan::VulkanGraphicsPipelineCreateInfo pipeline_info;
-        pipeline_info.color_formats.assign(color_formats.begin(), color_formats.end());
-        pipeline_info.color_blend_attachments.assign(color_formats.size(), opaqueColorBlend());
-        pipeline_info.depth_format = m_impl->depth_buffer->format();
-        pipeline_info.depth_test_enable = true;
-        pipeline_info.depth_write_enable = true;
-        m_impl->pipeline =
-            &context.pipelineCache().getGraphics(*m_impl->shader, *m_impl->binding_layout, layout, pipeline_info);
-
-        const glm::mat4 mvp = frame_data.projection * frame_data.view * draw.model_matrix;
-        MeshFrameUniforms frame_uniforms{};
-        std::memcpy(frame_uniforms.model_view_projection.data(), glm::value_ptr(mvp), sizeof(frame_uniforms.model_view_projection));
-        frame_uniforms.tint = {1.0f, 1.0f, 1.0f, 1.0f};
-
-        commands.bindPipeline(*m_impl->pipeline);
-        commands.bindBindingSet(*m_impl->pipeline, bindings);
-        commands.pushConstants(*m_impl->pipeline->layout(), push_constant_stages, 0, frame_uniforms);
-        commands.bindVertexBuffer(context.buffer(*draw.vertex_buffer));
-        commands.bindIndexBuffer(context.buffer(*draw.index_buffer), toVulkanIndexType(draw.index_buffer->indexType()));
-        commands.drawIndexed(draw.index_buffer->indexCount());
-    }
-
-    commands.endRendering();
-
-    const auto color_to_sample = renderer::vulkan::makeImageBarrier(m_impl->color_output->image(),
-        vk::ImageAspectFlagBits::eColor, renderer::vulkan::colorAttachmentWriteState(),
-        renderer::vulkan::fragmentSampledReadState());
-    const auto auxiliary_to_sample = renderer::vulkan::makeImageBarrier(
-        m_impl->auxiliary_output->image(), vk::ImageAspectFlagBits::eColor,
-        renderer::vulkan::colorAttachmentWriteState(), renderer::vulkan::fragmentSampledReadState());
-    const std::array sample_barriers = {color_to_sample, auxiliary_to_sample};
-    commands.pipelineBarrier({}, {}, sample_barriers);
-    m_impl->outputs_initialized = true;
-    m_impl->depth_initialized = true;
 }
 
 } // namespace arti::test_app

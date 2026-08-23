@@ -1,6 +1,5 @@
 #pragma once
-#include "artichoco/renderer/vulkan/vulkan_pass.h"
-#include "artichoco/renderer/vulkan/vulkan_sampler.h"
+#include "artichoco/renderer/render_pass.h"
 #include "frame_data.h"
 
 #include <filesystem>
@@ -8,22 +7,20 @@
 
 namespace arti::renderer {
 class Texture2D;
-namespace vulkan {
-class VulkanImage;
-} // namespace vulkan
 } // namespace arti::renderer
 
 namespace arti::test_app {
 
-class TextureComputePass final : public renderer::vulkan::VulkanPass {
+class TextureComputePass final : public renderer::RenderPass {
 public:
     TextureComputePass(std::shared_ptr<renderer::Texture2D> source, const std::filesystem::path& shader_path);
     ~TextureComputePass() override;
 
     void applyFrameData(const RenderFrameData& frame_data);
-    const renderer::vulkan::VulkanImage& output() const;
-    void prepare(renderer::vulkan::VulkanPassPrepareContext& context) override;
-    void record(renderer::vulkan::VulkanPassContext& context) override;
+    void prepare(renderer::RenderPassPrepareContext& context) override;
+    void record(renderer::RenderPassContext& context) override;
+
+    nvrhi::ITexture& output() const;
 
 private:
     struct Impl;

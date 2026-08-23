@@ -3,20 +3,27 @@
 #include "hello_triangle_layer.h"
 
 #include <memory>
+#include <string_view>
 
 namespace arti::core {
 
-Application* createApplication(int, char**) {
+Application* createApplication(int argc, char** argv)
+{
     ApplicationCreateInfo info;
-    info.name = "Hello Triangle";
+    info.name = "ArtiChoco Hello Triangle";
     info.log_channel = "HelloTriangle";
-    info.width = 960;
-    info.height = 540;
+    info.width = 1'280;
+    info.height = 720;
     info.window_factory = platform::createSDLWindow;
 
-    auto* application = new Application(info);
-    application->pushLayer(std::make_unique<hello_triangle::HelloTriangleLayer>());
-    return application;
+    bool smoke = false;
+    for (int index = 1; index < argc; ++index) {
+        smoke |= std::string_view{argv[index]} == "--smoke";
+    }
+
+    auto* app = new Application(info);
+    app->pushLayer(std::make_unique<hello_triangle::HelloTriangleLayer>(smoke));
+    return app;
 }
 
 } // namespace arti::core

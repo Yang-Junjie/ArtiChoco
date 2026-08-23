@@ -133,6 +133,7 @@ VulkanContext::VulkanContext(const VulkanContextCreateInfo& info, const VulkanSu
     if (validation_enabled) {
         m_debug_messenger = vk::raii::DebugUtilsMessengerEXT{m_instance, debug_info};
     }
+    m_enabled_extensions = std::move(extensions);
     getLogChannel().info(
         "Created Vulkan {}.{}.{} instance for '{}'{}",
         VK_API_VERSION_MAJOR(m_api_version),
@@ -150,6 +151,11 @@ const vk::raii::Context& VulkanContext::context() const noexcept
 const vk::raii::Instance& VulkanContext::instance() const noexcept
 {
     return m_instance;
+}
+
+std::span<const std::string> VulkanContext::enabledExtensions() const noexcept
+{
+    return m_enabled_extensions;
 }
 
 uint32_t VulkanContext::apiVersion() const noexcept

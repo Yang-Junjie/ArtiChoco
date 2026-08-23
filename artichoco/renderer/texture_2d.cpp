@@ -1,33 +1,41 @@
 #include "texture_2d.h"
 #include "detail/texture_format.h"
 #include "detail/texture_access.h"
-#include "vulkan/vulkan_allocator.h"
-#include "vulkan/vulkan_image.h"
-#include "vulkan/vulkan_resource_state.h"
-#include "vulkan/vulkan_upload_context.h"
+#include "vulkan/nvrhi_mipmap.h"
+#include "vulkan/nvrhi_resource_upload.h"
 
+#include <nvrhi/nvrhi.h>
+
+#include <algorithm>
+#include <array>
 #include <limits>
 #include <stdexcept>
 #include <utility>
-#include <vulkan/vulkan_raii.hpp>
 
 namespace arti::renderer {
+namespace {
+
+uint32_t mipLevelCount(uint32_t width, uint32_t height) noexcept
+{
+    uint32_t levels = 1;
+    while (width > 1 || height > 1) {
+        width = std::max(1u, width / 2);
+        height = std::max(1u, height / 2);
+        ++levels;
+    }
+    return levels;
+}
+
+} // namespace
 
 struct Texture2D::Impl {
-    vulkan::VulkanImage image;
-    detail::DeferredResourceOwnerPtr owner;
+    detail::ResourceOwnerPtr owner;
+    nvrhi::TextureHandle texture;
     uint32_t width{ 0 };
     uint32_t height{ 0 };
     uint32_t mip_levels{ 0 };
     TextureFormat format{ TextureFormat::RGBA8Srgb };
 
-    ~Impl() {
-        if (owner && image.image()) {
-            owner->deferRelease(std::packaged_task<void()>{
-                [allocation = std::move(image)]() mutable { (void) allocation; },
-            });
-        }
-    }
 };
 
 Texture2D::Texture2D(std::unique_ptr<Impl> impl) noexcept
@@ -45,9 +53,8 @@ uint32_t Texture2D::mipLevels() const noexcept { return m_impl->mip_levels; }
 
 TextureFormat Texture2D::format() const noexcept { return m_impl->format; }
 
-Texture2D detail::TextureAccess::create(vulkan::VulkanAllocator& allocator,
-        vulkan::VulkanUploadContext& upload_context, const vulkan::VulkanDevice& device,
-        DeferredResourceOwnerPtr owner, std::span<const std::byte> texels, uint32_t width,
+Texture2D detail::TextureAccess::create(nvrhi::IDevice& device,
+        ResourceOwnerPtr owner, std::span<const std::byte> texels, uint32_t width,
         uint32_t height, TextureFormat format, bool generate_mipmaps) {
     if (!owner || width == 0 || height == 0) {
         throw std::invalid_argument("A texture requires an owner and non-zero dimensions.");
@@ -58,66 +65,46 @@ Texture2D detail::TextureAccess::create(vulkan::VulkanAllocator& allocator,
         throw std::invalid_argument("Texture data does not match its dimensions and format.");
     }
 
-    uint32_t mip_levels = 1;
-    vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
-    if (generate_mipmaps) {
-        mip_levels = vulkan::imageMipLevelCount({ width, height });
-        usage |= vk::ImageUsageFlagBits::eTransferSrc;
-    }
-
-    const vk::Format vulkan_format = detail::toVulkanFormat(format);
+    const uint32_t mip_levels = generate_mipmaps ? mipLevelCount(width, height) : 1;
     auto impl = std::make_unique<Texture2D::Impl>();
-    vulkan::VulkanImageCreateInfo image_info;
-    image_info.extent = vk::Extent2D{ width, height };
-    image_info.format = vulkan_format;
-    image_info.usage = usage;
-    image_info.mip_levels = mip_levels;
-    impl->image = vulkan::VulkanImage{ device, allocator, image_info };
+    nvrhi::TextureDesc texture_desc;
+    texture_desc.setWidth(width)
+            .setHeight(height)
+            .setMipLevels(mip_levels)
+            .setDimension(nvrhi::TextureDimension::Texture2D)
+            .setFormat(detail::toNvrhiFormat(format))
+            .setDebugName("ArtiChoco Texture2D");
+    if (generate_mipmaps && mip_levels > 1) {
+        texture_desc.setIsUAV(true)
+                .setIsTypeless(true)
+                .enableAutomaticStateTracking(nvrhi::ResourceStates::CopyDest);
+        impl->texture = device.createTexture(texture_desc);
+        if (!impl->texture) {
+            throw std::runtime_error("NVRHI failed to create a mipmapped texture.");
+        }
+        vulkan::uploadAndGenerateNvrhiTextureMipmaps(device, impl->texture, texels,
+                static_cast<size_t>(width) * bytes_per_texel,
+                detail::toNvrhiFormat(format), detail::toNvrhiStorageFormat(format));
+    } else {
+        const std::array uploads = {vulkan::NvrhiTextureUpload{
+                0, 0, texels, static_cast<size_t>(width) * bytes_per_texel, 0}};
+        impl->texture = vulkan::createAndUploadNvrhiTexture(device, std::move(texture_desc),
+                uploads, nvrhi::ResourceStates::ShaderResource);
+    }
     impl->owner = std::move(owner);
     impl->width = width;
     impl->height = height;
     impl->mip_levels = mip_levels;
     impl->format = format;
-    const vulkan::VulkanImageState shader_read{
-        vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eFragmentShader,
-        vk::AccessFlagBits2::eShaderSampledRead,
-        vk::ImageLayout::eShaderReadOnlyOptimal,
-    };
-    if (generate_mipmaps) {
-        upload_context.uploadImageWithMipmaps(texels, impl->image.image(),
-                vk::Extent2D{ width, height }, vulkan_format,
-                static_cast<uint32_t>(bytes_per_texel), shader_read);
-    } else {
-        vk::ImageSubresourceLayers layers;
-        layers.setAspectMask(vk::ImageAspectFlagBits::eColor)
-                .setMipLevel(0)
-                .setBaseArrayLayer(0)
-                .setLayerCount(1);
-        vk::BufferImageCopy copy;
-        copy.setBufferOffset(0)
-                .setBufferRowLength(0)
-                .setBufferImageHeight(0)
-                .setImageSubresource(layers)
-                .setImageOffset({ 0, 0, 0 })
-                .setImageExtent({ width, height, 1 });
-        vk::ImageSubresourceRange range;
-        range.setAspectMask(vk::ImageAspectFlagBits::eColor)
-                .setBaseMipLevel(0)
-                .setLevelCount(1)
-                .setBaseArrayLayer(0)
-                .setLayerCount(1);
-        upload_context.uploadImage(texels, impl->image.image(),
-                std::span<const vk::BufferImageCopy>{ &copy, 1 }, range, shader_read);
-    }
     return Texture2D{ std::move(impl) };
 }
 
-const vulkan::VulkanImage& detail::TextureAccess::image(const Texture2D& texture) noexcept {
-    return texture.m_impl->image;
+nvrhi::ITexture& detail::TextureAccess::nvrhiHandle(const Texture2D& texture) noexcept {
+    return *texture.m_impl->texture;
 }
 
 bool detail::TextureAccess::isOwnedBy(const Texture2D& texture,
-        const DeferredResourceOwner* owner) noexcept {
+        const ResourceOwner* owner) noexcept {
     return texture.m_impl->owner.get() == owner;
 }
 

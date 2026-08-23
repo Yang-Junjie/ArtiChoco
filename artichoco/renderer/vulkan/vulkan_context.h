@@ -4,7 +4,9 @@
 #include <vulkan/vulkan_raii.hpp>
 
 #include <cstdint>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace arti::renderer::vulkan {
 
@@ -28,12 +30,14 @@ public:
 
     const vk::raii::Context& context() const noexcept;
     const vk::raii::Instance& instance() const noexcept;
+    std::span<const std::string> enabledExtensions() const noexcept;
     uint32_t apiVersion() const noexcept;
 
 private:
     vk::raii::Context m_context;
     vk::raii::Instance m_instance{nullptr};
     vk::raii::DebugUtilsMessengerEXT m_debug_messenger{nullptr};
+    std::vector<std::string> m_enabled_extensions;
     uint32_t m_api_version{VK_API_VERSION_1_0};
 };
 

@@ -1,56 +1,28 @@
-#include "artichoco/renderer/slang_compiler.h"
-#include "artichoco/renderer/vertex_buffer.h"
-#include "artichoco/renderer/vulkan/vulkan_binding_layout.h"
-#include "artichoco/renderer/vulkan/vulkan_binding_set.h"
-#include "artichoco/renderer/vulkan/vulkan_device.h"
-#include "artichoco/renderer/vulkan/vulkan_frame_manager.h"
-#include "artichoco/renderer/vulkan/vulkan_image.h"
-#include "artichoco/renderer/vulkan/vulkan_pass_context.h"
-#include "artichoco/renderer/vulkan/vulkan_pipeline.h"
-#include "artichoco/renderer/vulkan/vulkan_pipeline_cache.h"
-#include "artichoco/renderer/vulkan/vulkan_resource_state.h"
-#include "artichoco/renderer/vulkan/vulkan_shader.h"
 #include "mrt_composite_pass.h"
 
-#include <algorithm>
+#include "artichoco/renderer/slang_compiler.h"
+#include "artichoco/renderer/vulkan/nvrhi_shader_factory.h"
+
 #include <array>
 #include <stdexcept>
 #include <utility>
-#include <vector>
 
 namespace arti::test_app {
 
 struct MrtCompositePass::Impl {
     Impl(MrtMeshPass& source, std::filesystem::path shader_path)
-        : source(&source),
-          shader_path(std::move(shader_path))
+        : source(&source), shader_path(std::move(shader_path))
     {}
-
-    void initialize(renderer::vulkan::VulkanPassPrepareContext& context)
-    {
-        if (shader) {
-            return;
-        }
-
-        auto program = renderer::SlangCompiler::compileGraphics({shader_path});
-        binding_layout = std::make_unique<renderer::vulkan::VulkanBindingLayout>(context.device(), program.reflection);
-        shader = std::make_unique<renderer::vulkan::VulkanShader>(context.device(), std::move(program));
-        binding_sets.reserve(context.frameSlotCount());
-        for (size_t index = 0; index < context.frameSlotCount(); ++index) {
-            binding_sets.emplace_back(context.device(), context.descriptorAllocator(), *binding_layout);
-        }
-        output_sampler = renderer::vulkan::VulkanSampler{context.device()};
-        device = &context.device();
-    }
 
     MrtMeshPass* source{nullptr};
     std::filesystem::path shader_path;
-    const renderer::vulkan::VulkanDevice* device{nullptr};
-    std::unique_ptr<renderer::vulkan::VulkanShader> shader;
-    std::unique_ptr<renderer::vulkan::VulkanBindingLayout> binding_layout;
-    const renderer::vulkan::VulkanPipeline* pipeline{nullptr};
-    renderer::vulkan::VulkanSampler output_sampler;
-    std::vector<renderer::vulkan::VulkanBindingSet> binding_sets;
+    renderer::ShaderReflection reflection;
+    nvrhi::ShaderHandle vertex_shader;
+    nvrhi::ShaderHandle pixel_shader;
+    nvrhi::BindingLayoutHandle binding_layout;
+    nvrhi::BindingSetHandle binding_set;
+    nvrhi::GraphicsPipelineHandle pipeline;
+    nvrhi::SamplerHandle sampler;
 };
 
 MrtCompositePass::MrtCompositePass(MrtMeshPass& source, const std::filesystem::path& shader_path)
@@ -59,58 +31,74 @@ MrtCompositePass::MrtCompositePass(MrtMeshPass& source, const std::filesystem::p
 
 MrtCompositePass::~MrtCompositePass() = default;
 
-void MrtCompositePass::prepare(renderer::vulkan::VulkanPassPrepareContext& context)
+void MrtCompositePass::prepare(renderer::RenderPassPrepareContext& context)
 {
-    m_impl->initialize(context);
-    (void) m_impl->source->colorOutput();
-    (void) m_impl->source->auxiliaryOutput();
+    if (!m_impl->binding_layout) {
+        const renderer::CompiledGraphicsProgram program =
+                renderer::SlangCompiler::compileGraphics({m_impl->shader_path});
+        const auto shaders = renderer::vulkan::createNvrhiGraphicsShaderSet(
+                context.device(), program, "ArtiChoco NVRHI MRT composite");
+        if (shaders.binding_layouts.empty() || !shaders.binding_layouts.front()) {
+            throw std::runtime_error("MrtCompositePass shader has no NVRHI binding layout.");
+        }
+        m_impl->vertex_shader = shaders.vertex_shader;
+        m_impl->pixel_shader = shaders.pixel_shader;
+        m_impl->binding_layout = shaders.binding_layouts.front();
+        m_impl->reflection = program.reflection;
+        m_impl->sampler = context.device().createSampler(nvrhi::SamplerDesc{});
+        if (!m_impl->sampler) {
+            throw std::runtime_error("NVRHI failed to create the MRT composite sampler.");
+        }
+    }
+
+    const std::array resources = {
+            renderer::vulkan::NvrhiBindingResource::Texture(
+                    "color_output", m_impl->source->colorOutput()),
+            renderer::vulkan::NvrhiBindingResource::Texture(
+                    "auxiliary_output", m_impl->source->auxiliaryOutput()),
+            renderer::vulkan::NvrhiBindingResource::Sampler(
+                    "output_sampler", *m_impl->sampler),
+    };
+    m_impl->binding_set = renderer::vulkan::createNvrhiBindingSet(
+            context.device(), m_impl->reflection, 0, *m_impl->binding_layout, resources);
+
+    if (!m_impl->pipeline) {
+        nvrhi::DepthStencilState depth_state;
+        depth_state.disableDepthTest().disableDepthWrite().disableStencil();
+        nvrhi::RenderState render_state;
+        render_state.setDepthStencilState(depth_state);
+        nvrhi::GraphicsPipelineDesc pipeline_desc;
+        pipeline_desc.setPrimType(nvrhi::PrimitiveType::TriangleList)
+                .setVertexShader(m_impl->vertex_shader)
+                .setPixelShader(m_impl->pixel_shader)
+                .setRenderState(render_state)
+                .addBindingLayout(m_impl->binding_layout);
+        m_impl->pipeline = context.device().createGraphicsPipeline(
+                pipeline_desc, context.framebuffer().getFramebufferInfo());
+        if (!m_impl->pipeline) {
+            throw std::runtime_error("NVRHI failed to create the MRT composite pipeline.");
+        }
+    }
 }
 
-void MrtCompositePass::record(renderer::vulkan::VulkanPassContext& context)
+void MrtCompositePass::record(renderer::RenderPassContext& context)
 {
-    auto& frame = context.frame();
-    const std::array color_formats = {frame.colorFormat()};
-    const renderer::VertexBufferLayout empty_vertex_layout;
-    renderer::vulkan::VulkanGraphicsPipelineCreateInfo pipeline_info;
-    pipeline_info.color_formats.assign(color_formats.begin(), color_formats.end());
-    m_impl->pipeline =
-        &context.pipelineCache().getGraphics(*m_impl->shader, *m_impl->binding_layout, empty_vertex_layout, pipeline_info);
+    if (!m_impl->pipeline || !m_impl->binding_set) {
+        throw std::logic_error("MrtCompositePass was not prepared.");
+    }
 
-    const auto& color_output = m_impl->source->colorOutput();
-    const auto& auxiliary_output = m_impl->source->auxiliaryOutput();
-    auto& bindings = m_impl->binding_sets.at(frame.frameSlotIndex());
-    bindings.writeSampledImage("color_output", *color_output.imageView());
-    bindings.writeSampledImage("auxiliary_output", *auxiliary_output.imageView());
-    bindings.writeSampler("output_sampler", *m_impl->output_sampler.handle());
-
-    const auto to_color_attachment = renderer::vulkan::makeImageBarrier(frame.colorImage(),
-        vk::ImageAspectFlagBits::eColor, renderer::vulkan::undefinedImageState(),
-        renderer::vulkan::colorAttachmentWriteState());
     auto& commands = context.commands();
-    commands.imageBarrier(to_color_attachment);
-
-    vk::RenderingAttachmentInfo color_attachment;
-    color_attachment.setImageView(frame.colorImageView())
-        .setImageLayout(vk::ImageLayout::eColorAttachmentOptimal)
-        .setLoadOp(vk::AttachmentLoadOp::eClear)
-        .setStoreOp(vk::AttachmentStoreOp::eStore)
-        .setClearValue(vk::ClearValue{vk::ClearColorValue{std::array{0.02f, 0.025f, 0.03f, 1.0f}}});
-    vk::RenderingInfo rendering_info;
-    rendering_info.setRenderArea(vk::Rect2D{{0, 0}, frame.extent()})
-        .setLayerCount(1)
-        .setColorAttachments(color_attachment);
-
-    commands.beginRendering(rendering_info);
-    commands.setViewportAndScissor(frame.extent());
-    commands.bindPipeline(*m_impl->pipeline);
-    commands.bindBindingSet(*m_impl->pipeline, bindings);
-    commands.draw(3);
-    commands.endRendering();
-
-    const auto to_present = renderer::vulkan::makeImageBarrier(frame.colorImage(),
-        vk::ImageAspectFlagBits::eColor, renderer::vulkan::colorAttachmentWriteState(),
-        renderer::vulkan::presentState());
-    commands.imageBarrier(to_present);
+    commands.clearTextureFloat(&context.colorTexture(), nvrhi::AllSubresources,
+            nvrhi::Color{0.02f, 0.025f, 0.03f, 1.0f});
+    nvrhi::ViewportState viewport;
+    viewport.addViewportAndScissorRect(context.framebufferInfo().getViewport());
+    nvrhi::GraphicsState state;
+    state.setPipeline(m_impl->pipeline)
+            .setFramebuffer(&context.framebuffer())
+            .setViewport(viewport)
+            .addBindingSet(m_impl->binding_set);
+    commands.setGraphicsState(state);
+    commands.draw(nvrhi::DrawArguments{}.setVertexCount(3));
 }
 
 } // namespace arti::test_app

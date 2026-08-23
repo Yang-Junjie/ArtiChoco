@@ -1,1 +1,5 @@
 add_subdirectory(hello_triangle)
+add_subdirectory(hello_cube)
+add_subdirectory(basic_lighting)
+add_subdirectory(instancing)
+add_subdirectory(render_to_texture)
