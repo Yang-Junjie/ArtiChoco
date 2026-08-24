@@ -63,7 +63,7 @@ std::optional<Value> deserializeValue(const YAML::Node& node) {
     return std::nullopt;
 }
 
-} // namespace
+}
 
 bool isSafeAssetRelativePath(const std::filesystem::path& path, bool allow_empty) {
     if (path.empty()) {
@@ -206,4 +206,4 @@ std::optional<AssetMetadata> deserializeAssetMetadata(std::string_view text) {
     }
 }
 
-} // namespace arti::asset
+}

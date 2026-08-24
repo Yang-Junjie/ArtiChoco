@@ -32,7 +32,7 @@ bool writeFile(const std::filesystem::path& file, const std::string& contents) {
     return output.good();
 }
 
-} // namespace
+}
 
 bool AssetStorage::open(std::filesystem::path assets_root,
         std::filesystem::path artifacts_root) {
@@ -199,4 +199,4 @@ std::optional<std::filesystem::path> AssetStorage::resolveArtifactPath(
     return (m_artifacts_root / relative_path.lexically_normal()).lexically_normal();
 }
 
-} // namespace arti::asset
+}

@@ -73,4 +73,4 @@ void AssetCatalog::clear() noexcept {
     m_dependents.clear();
 }
 
-} // namespace arti::asset
+}

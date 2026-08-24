@@ -4,6 +4,6 @@
 
 namespace arti::asset {
 
-[[nodiscard]] const core::Logger::Channel& getLogChannel();
+const core::Logger::Channel& getLogChannel();
 
-} // namespace arti::asset
+}

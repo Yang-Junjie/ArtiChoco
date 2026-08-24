@@ -21,4 +21,4 @@ bool AssetImporter::hasCurrentFiles(const AssetMetadata& metadata) const {
             std::filesystem::is_regular_file(*artifact, error) && !error;
 }
 
-} // namespace arti::asset
+}

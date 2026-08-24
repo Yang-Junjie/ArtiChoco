@@ -8,4 +8,4 @@ const core::Logger::Channel& getLogChannel()
     return *channel;
 }
 
-} // namespace arti::asset
+}

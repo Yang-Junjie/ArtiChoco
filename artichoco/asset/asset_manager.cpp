@@ -37,10 +37,9 @@ struct OutputIdentityHash {
     }
 };
 
-} // namespace
+}
 
-bool AssetManager::open(std::filesystem::path assets_root,
-        std::filesystem::path artifacts_root) {
+bool AssetManager::open(std::filesystem::path assets_root, std::filesystem::path artifacts_root) {
     close();
     if (!m_storage.open(std::move(assets_root), std::move(artifacts_root))) {
         return false;
@@ -50,7 +49,7 @@ bool AssetManager::open(std::filesystem::path assets_root,
         m_storage.close();
         return false;
     }
-    for (const AssetMetadata& entry : *metadata) {
+    for (const AssetMetadata& entry: *metadata) {
         m_catalog.insert(entry);
     }
     getLogChannel().info("Opened AssetManager with {} Assets", m_catalog.importedCount());
@@ -72,7 +71,7 @@ bool AssetManager::registerImporter(std::unique_ptr<AssetImporter> importer) {
 
     std::vector<std::string> extensions;
     try {
-        for (const std::string& extension : importer->getSupportedExtensions()) {
+        for (const std::string& extension: importer->getSupportedExtensions()) {
             std::string normalized = normalizeExtension(extension);
             if (!normalized.empty() &&
                     std::ranges::find(extensions, normalized) == extensions.end()) {
@@ -87,7 +86,7 @@ bool AssetManager::registerImporter(std::unique_ptr<AssetImporter> importer) {
         getLogChannel().error("AssetImporter did not declare any supported extensions");
         return false;
     }
-    for (const ImporterEntry& entry : m_importers) {
+    for (const ImporterEntry& entry: m_importers) {
         const auto conflict = std::ranges::find_first_of(entry.extensions, extensions);
         if (conflict != entry.extensions.end()) {
             getLogChannel().error(
@@ -141,9 +140,8 @@ std::vector<AssetImportResult> AssetManager::import(const std::filesystem::path&
         return results;
     }
 
-    const auto entry = std::ranges::find_if(m_importers, [&importer](const ImporterEntry& entry) {
-        return entry.importer.get() == &importer;
-    });
+    const auto entry = std::ranges::find_if(m_importers,
+            [&importer](const ImporterEntry& entry) { return entry.importer.get() == &importer; });
     if (entry == m_importers.end()) {
         getLogChannel().error("Cannot import '{}': the AssetImporter is not registered",
                 source_path.string());
@@ -180,11 +178,8 @@ std::vector<AssetImportResult> AssetManager::import(const std::filesystem::path&
 
 void AssetManager::importOutputs(std::vector<AssetImportOutput>& outputs,
         const std::filesystem::path& normalized_source) {
-    // Collect the pre-existing identities for this batch up front, so that
-    // outputs created by the same import cannot match each other and so that
-    // one pre-existing identity is reused by at most one output.
     std::unordered_map<OutputIdentity, core::UUID, OutputIdentityHash> existing_by_identity;
-    for (const AssetImportOutput& output : outputs) {
+    for (const AssetImportOutput& output: outputs) {
         std::filesystem::path output_source = normalized_source;
         if (!output.source_suffix.empty()) {
             output_source += output.source_suffix;
@@ -193,13 +188,13 @@ void AssetManager::importOutputs(std::vector<AssetImportOutput>& outputs,
         if (output.already_imported || existing_by_identity.contains(identity)) {
             continue;
         }
-        if (const auto existing = m_catalog.findBySourcePathAndType(
-                    output_source, output.metadata.type)) {
+        if (const auto existing =
+                        m_catalog.findBySourcePathAndType(output_source, output.metadata.type)) {
             existing_by_identity.emplace(identity, existing->handle);
         }
     }
 
-    for (AssetImportOutput& output : outputs) {
+    for (AssetImportOutput& output: outputs) {
         std::filesystem::path output_source = normalized_source;
         if (!output.source_suffix.empty()) {
             output_source += output.source_suffix;
@@ -283,7 +278,7 @@ std::shared_ptr<Asset> AssetManager::load(core::UUID handle) {
         std::vector<std::shared_ptr<Asset>> dependencies;
         dependencies.reserve(metadata->dependencies.size());
         bool dependencies_complete = true;
-        for (core::UUID dependency : metadata->dependencies) {
+        for (core::UUID dependency: metadata->dependencies) {
             std::shared_ptr<Asset> loaded = load(dependency);
             if (!loaded) {
                 getLogChannel().error("Failed to load dependency {} of Asset {}",
@@ -297,8 +292,8 @@ std::shared_ptr<Asset> AssetManager::load(core::UUID handle) {
             asset = loader->second->decode(*metadata, *artifact_file, dependencies);
         }
     } catch (const std::exception& exception) {
-        getLogChannel().error("AssetLoader threw while decoding Asset {}: {}",
-                handle.toString(), exception.what());
+        getLogChannel().error("AssetLoader threw while decoding Asset {}: {}", handle.toString(),
+                exception.what());
     } catch (...) {
         getLogChannel().error("AssetLoader threw while decoding Asset {}", handle.toString());
     }
@@ -333,10 +328,10 @@ void AssetManager::unloadWithDependents(core::UUID handle) noexcept {
             continue;
         }
         m_loaded.erase(current);
-        for (core::UUID dependent : m_catalog.dependentsOf(current)) {
+        for (core::UUID dependent: m_catalog.dependentsOf(current)) {
             stack.push_back(dependent);
         }
     }
 }
 
-} // namespace arti::asset
+}

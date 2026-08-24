@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.25)
 
 project(ArtiChoco VERSION 0.1.0 LANGUAGES CXX)
 
+option(ARTICHOCO_BUILD_EXAMPLES "Build ArtiChoco examples" OFF)
+
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
@@ -13,4 +15,7 @@ include(ArtiVulkanSDK)
 
 add_subdirectory(third_party)
 add_subdirectory(artichoco)
-add_subdirectory(examples)
+
+if(ARTICHOCO_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
