@@ -6,6 +6,7 @@
 #include <nvrhi/nvrhi.h>
 
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace arti::renderer {
@@ -28,9 +29,9 @@ uint32_t IndexBuffer::indexCount() const noexcept { return m_impl->index_count; 
 
 IndexType IndexBuffer::indexType() const noexcept { return m_impl->index_type; }
 
-IndexBuffer detail::BufferAccess::createIndexBuffer(nvrhi::IDevice& device,
-        ResourceOwnerPtr owner,
-        std::span<const std::byte> data, uint32_t index_count, IndexType index_type) {
+IndexBuffer detail::BufferAccess::createIndexBuffer(nvrhi::IDevice& device, ResourceOwnerPtr owner,
+        std::span<const std::byte> data, uint32_t index_count, IndexType index_type,
+        std::string_view debug_name) {
     const size_t index_size = index_type == IndexType::UInt16 ? sizeof(uint16_t) : sizeof(uint32_t);
     if (!owner || index_count == 0 || data.empty() || data.size() != index_size * index_count) {
         throw std::invalid_argument("Index buffer data does not match its count and type.");
@@ -39,10 +40,10 @@ IndexBuffer detail::BufferAccess::createIndexBuffer(nvrhi::IDevice& device,
     auto impl = std::make_unique<IndexBuffer::Impl>();
     nvrhi::BufferDesc buffer_desc;
     buffer_desc.setByteSize(data.size_bytes())
-            .setDebugName("ArtiChoco IndexBuffer")
+            .setDebugName(debug_name.empty() ? "ArtiChoco IndexBuffer" : std::string{ debug_name })
             .setIsIndexBuffer(true);
-    impl->buffer = vulkan::createAndUploadNvrhiBuffer(
-            device, std::move(buffer_desc), data, nvrhi::ResourceStates::IndexBuffer);
+    impl->buffer = vulkan::createAndUploadNvrhiBuffer(device, std::move(buffer_desc), data,
+            nvrhi::ResourceStates::IndexBuffer);
     impl->owner = owner;
     impl->index_count = index_count;
     impl->index_type = index_type;

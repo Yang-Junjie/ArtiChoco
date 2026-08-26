@@ -1,4 +1,5 @@
 add_library(artichoco_renderer STATIC
+    detail/nvrhi_texture_readback.cpp
     index_buffer.cpp
     render_pass.cpp
     renderer_log.cpp

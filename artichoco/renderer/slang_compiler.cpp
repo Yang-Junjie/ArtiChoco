@@ -281,6 +281,65 @@ CompiledComputeProgram compileComputeFromContext(CompileContext& context,
     return program;
 }
 
+CompiledGraphicsProgram compileGraphicsFromContext(CompileContext& context,
+        std::string_view vertex_entry_point_name, std::string_view fragment_entry_point_name,
+        std::string_view log_name) {
+    Slang::ComPtr<slang::IBlob> diagnostics;
+    Slang::ComPtr<slang::IEntryPoint> vertex_entry;
+    const std::string vertex_name{ vertex_entry_point_name };
+    checkSlangResult(context.module->findEntryPointByName(vertex_name.c_str(),
+                             vertex_entry.writeRef()),
+            "IModule::findEntryPointByName(vertex)");
+
+    Slang::ComPtr<slang::IEntryPoint> fragment_entry;
+    const std::string fragment_name{ fragment_entry_point_name };
+    checkSlangResult(context.module->findEntryPointByName(fragment_name.c_str(),
+                             fragment_entry.writeRef()),
+            "IModule::findEntryPointByName(fragment)");
+
+    slang::IComponentType* components[] = { context.module.get(), vertex_entry.get(),
+        fragment_entry.get() };
+    Slang::ComPtr<slang::IComponentType> composite;
+    diagnostics.setNull();
+    checkSlangResult(context.session->createCompositeComponentType(components, 3,
+                             composite.writeRef(), diagnostics.writeRef()),
+            "ISession::createCompositeComponentType(graphics)", diagnostics);
+
+    Slang::ComPtr<slang::IComponentType> linked_program;
+    diagnostics.setNull();
+    checkSlangResult(composite->link(linked_program.writeRef(), diagnostics.writeRef()),
+            "IComponentType::link(graphics)", diagnostics);
+
+    Slang::ComPtr<slang::IBlob> vertex_code;
+    diagnostics.setNull();
+    checkSlangResult(
+            linked_program->getEntryPointCode(0, 0, vertex_code.writeRef(), diagnostics.writeRef()),
+            "IComponentType::getEntryPointCode(vertex)", diagnostics);
+
+    Slang::ComPtr<slang::IBlob> fragment_code;
+    diagnostics.setNull();
+    checkSlangResult(linked_program->getEntryPointCode(1, 0, fragment_code.writeRef(),
+                             diagnostics.writeRef()),
+            "IComponentType::getEntryPointCode(fragment)", diagnostics);
+
+    CompiledGraphicsProgram program;
+    program.vertex.entry_point = "main";
+    program.vertex.spirv = copySpirv(*vertex_code, "vertex");
+    program.fragment.entry_point = "main";
+    program.fragment.spirv = copySpirv(*fragment_code, "fragment");
+    diagnostics.setNull();
+    slang::ProgramLayout* layout = linked_program->getLayout(0, diagnostics.writeRef());
+    reportDiagnostics(diagnostics, layout == nullptr);
+    if (layout == nullptr) {
+        throw std::runtime_error("Slang failed to reflect the graphics program.");
+    }
+    program.reflection =
+            reflectProgram(*layout, ShaderStageMask::Vertex | ShaderStageMask::Fragment);
+    logReflection(program.reflection);
+    getLogChannel().info("Compiled Slang shader '{}' to SPIR-V", log_name);
+    return program;
+}
+
 } // namespace
 
 CompiledGraphicsProgram SlangCompiler::compileGraphics(const GraphicsShaderCompileInfo& info) {
@@ -343,6 +402,22 @@ CompiledGraphicsProgram SlangCompiler::compileGraphics(const GraphicsShaderCompi
     logReflection(program.reflection);
     getLogChannel().info("Compiled Slang shader '{}' to SPIR-V", info.source_path.string());
     return program;
+}
+
+CompiledGraphicsProgram SlangCompiler::compileGraphicsSource(std::string_view source,
+        std::string_view source_name, std::string_view vertex_entry_point,
+        std::string_view fragment_entry_point, const std::filesystem::path& search_path) {
+    if (source.empty() || source_name.empty() || vertex_entry_point.empty() ||
+            fragment_entry_point.empty()) {
+        throw std::invalid_argument(
+                "Inline Slang graphics source requires source, name, and entry points.");
+    }
+    const std::filesystem::path resolved_search_path =
+            search_path.empty() ? std::filesystem::current_path() : search_path;
+    CompileContext context = createCompileContext(source_name, source_name, source,
+            resolved_search_path);
+    return compileGraphicsFromContext(context, vertex_entry_point, fragment_entry_point,
+            source_name);
 }
 
 CompiledComputeProgram SlangCompiler::compileCompute(const ComputeShaderCompileInfo& info) {

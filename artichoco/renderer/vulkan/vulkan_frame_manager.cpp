@@ -283,6 +283,21 @@ size_t VulkanFrameManager::frameSlotCount() const noexcept
     return m_frame_queries.size();
 }
 
+uint32_t VulkanFrameManager::swapchainWidth() const noexcept
+{
+    return m_swapchain.extent().width;
+}
+
+uint32_t VulkanFrameManager::swapchainHeight() const noexcept
+{
+    return m_swapchain.extent().height;
+}
+
+bool VulkanFrameManager::swapchainIsRenderable() const noexcept
+{
+    return m_swapchain.isRenderable();
+}
+
 bool VulkanFrameManager::recreateSwapchain()
 {
     if (m_window.getFramebufferWidth() == 0 || m_window.getFramebufferHeight() == 0) {

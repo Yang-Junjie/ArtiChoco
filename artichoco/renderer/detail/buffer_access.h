@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <span>
+#include <string_view>
 
 namespace nvrhi {
 class IBuffer;
@@ -15,18 +16,12 @@ namespace arti::renderer::detail {
 
 class BufferAccess {
 public:
-    static VertexBuffer createVertexBuffer(
-        nvrhi::IDevice& device,
-        ResourceOwnerPtr owner,
-        std::span<const std::byte> data,
-        uint32_t vertex_count,
-        VertexBufferLayout layout);
-    static IndexBuffer createIndexBuffer(
-        nvrhi::IDevice& device,
-        ResourceOwnerPtr owner,
-        std::span<const std::byte> data,
-        uint32_t index_count,
-        IndexType index_type);
+    static VertexBuffer createVertexBuffer(nvrhi::IDevice& device, ResourceOwnerPtr owner,
+            std::span<const std::byte> data, uint32_t vertex_count, VertexBufferLayout layout,
+            std::string_view debug_name);
+    static IndexBuffer createIndexBuffer(nvrhi::IDevice& device, ResourceOwnerPtr owner,
+            std::span<const std::byte> data, uint32_t index_count, IndexType index_type,
+            std::string_view debug_name);
 
     static nvrhi::IBuffer& nvrhiHandle(const VertexBuffer& buffer) noexcept;
     static nvrhi::IBuffer& nvrhiHandle(const IndexBuffer& buffer) noexcept;

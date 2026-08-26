@@ -1,6 +1,7 @@
 #pragma once
 #include "artichoco/core/window.h"
 #include "index_buffer.h"
+#include "render_device_capabilities.h"
 #include "render_pass.h"
 #include "texture_2d.h"
 #include "texture_cube.h"
@@ -12,8 +13,10 @@
 #include <array>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 
 namespace arti::renderer::vulkan {
 class VulkanSurfaceSource;
@@ -31,6 +34,20 @@ struct RenderDeviceCreateInfo {
 #endif
 };
 
+struct RenderSwapchainInfo {
+    uint32_t width{ 0 };
+    uint32_t height{ 0 };
+    bool available{ false };
+};
+
+struct RenderFrameResult {
+    std::optional<size_t> completed_frame_slot;
+    std::optional<size_t> submitted_frame_slot;
+    bool rendered{ false };
+
+    bool wasRendered() const noexcept { return rendered; }
+};
+
 class RenderDevice {
 public:
     RenderDevice(core::Window& window, std::unique_ptr<vulkan::VulkanSurfaceSource> surface_source,
@@ -41,24 +58,27 @@ public:
     RenderDevice& operator=(const RenderDevice&) = delete;
 
     VertexBuffer createVertexBuffer(std::span<const std::byte> data, uint32_t vertex_count,
-            VertexBufferLayout layout);
+            VertexBufferLayout layout, std::string_view debug_name = {});
 
     IndexBuffer createIndexBuffer(std::span<const std::byte> data, uint32_t index_count,
-            IndexType index_type = IndexType::UInt32);
+            IndexType index_type = IndexType::UInt32, std::string_view debug_name = {});
 
     Texture2D createTexture2D(std::span<const std::byte> texels, uint32_t width, uint32_t height,
-            TextureFormat format = TextureFormat::RGBA8Srgb, bool generate_mipmaps = true);
+            TextureFormat format = TextureFormat::RGBA8Srgb, bool generate_mipmaps = true,
+            std::string_view debug_name = {});
 
     TextureCube createTextureCube(const TextureCubeFaces& faces, uint32_t size,
-            TextureFormat format = TextureFormat::RGBA8Srgb);
+            TextureFormat format = TextureFormat::RGBA8Srgb, std::string_view debug_name = {});
     TextureCube createTextureCube(std::span<const TextureCubeMipData> mip_levels,
-            TextureFormat format = TextureFormat::RGBA8Srgb);
+            TextureFormat format = TextureFormat::RGBA8Srgb, std::string_view debug_name = {});
 
-    bool renderFrame(std::span<RenderPass* const> passes);
+    RenderFrameResult renderFrame(std::span<RenderPass* const> passes);
     bool renderNvrhiClearFrame(const std::array<float, 4>& clear_color);
     bool nvrhiComputeShaderSmoke(const std::filesystem::path& source_path);
     bool nvrhiResourceSmoke();
     bool supportsBindlessTextures() const noexcept;
+    RenderFormatSupport queryFormatSupport(RenderDeviceFormat format) const noexcept;
+    RenderSwapchainInfo swapchainInfo() const noexcept;
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
 

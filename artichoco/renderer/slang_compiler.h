@@ -90,6 +90,11 @@ struct ComputeShaderCompileInfo {
 class SlangCompiler {
 public:
     static CompiledGraphicsProgram compileGraphics(const GraphicsShaderCompileInfo& info);
+    static CompiledGraphicsProgram compileGraphicsSource(std::string_view source,
+            std::string_view source_name = "inline_graphics.slang",
+            std::string_view vertex_entry_point = "vertexMain",
+            std::string_view fragment_entry_point = "fragmentMain",
+            const std::filesystem::path& search_path = {});
     static CompiledComputeProgram compileCompute(const ComputeShaderCompileInfo& info);
     static CompiledComputeProgram compileComputeSource(std::string_view source,
             std::string_view source_name = "inline_compute.slang",

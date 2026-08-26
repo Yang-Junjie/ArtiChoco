@@ -10,8 +10,7 @@
 namespace arti::renderer::vulkan {
 namespace {
 
-nvrhi::ShaderType toNvrhiShaderType(ShaderStageMask stages)
-{
+nvrhi::ShaderType toNvrhiShaderType(ShaderStageMask stages) {
     nvrhi::ShaderType result = nvrhi::ShaderType::None;
     const auto mask = static_cast<uint32_t>(stages);
     if (mask & static_cast<uint32_t>(ShaderStageMask::Vertex)) {
@@ -29,8 +28,7 @@ nvrhi::ShaderType toNvrhiShaderType(ShaderStageMask stages)
     return result;
 }
 
-nvrhi::BindingLayoutItem toNvrhiBindingItem(const ReflectedShaderBinding& binding)
-{
+nvrhi::BindingLayoutItem toNvrhiBindingItem(const ReflectedShaderBinding& binding) {
     if (binding.count == 0 || binding.count > std::numeric_limits<uint16_t>::max()) {
         throw std::invalid_argument("NVRHI binding array count is outside the supported range.");
     }
@@ -70,7 +68,8 @@ nvrhi::BindingLayoutItem toNvrhiBindingItem(const ReflectedShaderBinding& bindin
             break;
         case ShaderResourceType::CombinedImageSampler:
             throw std::invalid_argument(
-                    "Combined image samplers are not supported by the NVRHI binding bridge; use separate texture and sampler bindings.");
+                    "Combined image samplers are not supported by the NVRHI binding bridge; use "
+                    "separate texture and sampler bindings.");
     }
     result.setSize(binding.count);
     return result;
@@ -81,8 +80,7 @@ struct LayoutBuildState {
     std::map<uint32_t, nvrhi::ResourceType> slots;
 };
 
-nvrhi::VulkanBindingOffsets zeroVulkanBindingOffsets()
-{
+nvrhi::VulkanBindingOffsets zeroVulkanBindingOffsets() {
     nvrhi::VulkanBindingOffsets offsets;
     offsets.setShaderResourceOffset(0)
             .setSamplerOffset(0)
@@ -91,12 +89,11 @@ nvrhi::VulkanBindingOffsets zeroVulkanBindingOffsets()
     return offsets;
 }
 
-std::vector<nvrhi::BindingLayoutHandle> createBindingLayouts(
-        nvrhi::IDevice& device, const ShaderReflection& reflection, uint32_t bindless_capacity)
-{
+std::vector<nvrhi::BindingLayoutHandle> createBindingLayouts(nvrhi::IDevice& device,
+        const ShaderReflection& reflection, uint32_t bindless_capacity) {
     std::map<uint32_t, LayoutBuildState> states;
     std::map<uint32_t, ReflectedShaderBinding> unbounded_bindings;
-    for (const auto& binding : reflection.bindings) {
+    for (const auto& binding: reflection.bindings) {
         if (binding.unbounded) {
             if (!unbounded_bindings.emplace(binding.set, binding).second) {
                 throw std::invalid_argument(
@@ -121,9 +118,10 @@ std::vector<nvrhi::BindingLayoutHandle> createBindingLayouts(
         state.desc.addItem(item);
     }
 
-    for (const auto& push_constant : reflection.push_constants) {
+    for (const auto& push_constant: reflection.push_constants) {
         if (push_constant.size == 0 || push_constant.size > std::numeric_limits<uint16_t>::max()) {
-            throw std::invalid_argument("Reflected NVRHI push constants exceed the supported size.");
+            throw std::invalid_argument(
+                    "Reflected NVRHI push constants exceed the supported size.");
         }
         auto& state = states[0];
         if (state.desc.visibility == nvrhi::ShaderType::None) {
@@ -131,13 +129,13 @@ std::vector<nvrhi::BindingLayoutHandle> createBindingLayouts(
             state.desc.bindingOffsets = zeroVulkanBindingOffsets();
         }
         state.desc.visibility = state.desc.visibility | toNvrhiShaderType(push_constant.stages);
-        const auto existing = std::ranges::find_if(state.desc.bindings, [](const auto& item) {
-            return item.type == nvrhi::ResourceType::PushConstants;
-        });
+        const auto existing = std::ranges::find_if(state.desc.bindings,
+                [](const auto& item) { return item.type == nvrhi::ResourceType::PushConstants; });
         if (existing == state.desc.bindings.end()) {
             state.desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, push_constant.size));
         } else if (existing->size != push_constant.size) {
-            throw std::invalid_argument("Reflected push constant ranges do not have one consistent size.");
+            throw std::invalid_argument(
+                    "Reflected push constant ranges do not have one consistent size.");
         }
     }
 
@@ -147,21 +145,19 @@ std::vector<nvrhi::BindingLayoutHandle> createBindingLayouts(
         }
     }
 
-    const uint32_t maximum_set = std::max(
-            states.empty() ? 0u : states.rbegin()->first,
+    const uint32_t maximum_set = std::max(states.empty() ? 0u : states.rbegin()->first,
             unbounded_bindings.empty() ? 0u : unbounded_bindings.rbegin()->first);
     std::vector<nvrhi::BindingLayoutHandle> layouts(static_cast<size_t>(maximum_set) + 1);
-    for (auto& [set, state] : states) {
+    for (auto& [set, state]: states) {
         if (unbounded_bindings.contains(set)) {
-            throw std::invalid_argument(
-                    "An unbounded binding must occupy its own descriptor set.");
+            throw std::invalid_argument("An unbounded binding must occupy its own descriptor set.");
         }
         layouts[set] = device.createBindingLayout(state.desc);
         if (layouts[set].Get() == nullptr) {
             throw std::runtime_error("NVRHI failed to create a reflected binding layout.");
         }
     }
-    for (const auto& [set, binding] : unbounded_bindings) {
+    for (const auto& [set, binding]: unbounded_bindings) {
         if (binding.type != ShaderResourceType::SampledImage || binding.binding != 0) {
             throw std::invalid_argument(
                     "NVRHI bindless reflection requires one sampled-image binding at slot zero.");
@@ -185,100 +181,110 @@ std::vector<nvrhi::BindingLayoutHandle> createBindingLayouts(
 }
 
 nvrhi::ShaderHandle createShader(nvrhi::IDevice& device, const CompiledShaderStage& stage,
-        nvrhi::ShaderType type, std::string_view debug_name)
-{
+        nvrhi::ShaderType type, std::string_view debug_name) {
     if (stage.spirv.empty()) {
         throw std::invalid_argument("Cannot create an NVRHI shader from empty SPIR-V.");
     }
     nvrhi::ShaderDesc desc;
     desc.setShaderType(type).setEntryName(stage.entry_point);
     if (!debug_name.empty()) {
-        desc.setDebugName(std::string{debug_name});
+        desc.setDebugName(std::string{ debug_name });
     }
-    auto shader = device.createShader(desc, stage.spirv.data(), stage.spirv.size() * sizeof(uint32_t));
+    auto shader =
+            device.createShader(desc, stage.spirv.data(), stage.spirv.size() * sizeof(uint32_t));
     if (shader.Get() == nullptr) {
         throw std::runtime_error("NVRHI failed to create a shader from Slang SPIR-V.");
     }
     return shader;
 }
 
-nvrhi::BindingSetItem toNvrhiBindingSetItem(
-        const ReflectedShaderBinding& binding, const NvrhiBindingResource& resource)
-{
-    nvrhi::BindingSetItem result;
+nvrhi::BindingSetItem toNvrhiBindingSetItem(const ReflectedShaderBinding& binding,
+        const NvrhiBindingResource& resource) {
+    nvrhi::BindingSetItem result{};
     switch (binding.type) {
         case ShaderResourceType::Sampler:
             if (resource.kind != NvrhiBindingResourceKind::Sampler || resource.sampler == nullptr) {
-                throw std::invalid_argument("A reflected sampler requires an NVRHI sampler resource.");
+                throw std::invalid_argument(
+                        "A reflected sampler requires an NVRHI sampler resource.");
             }
             result = nvrhi::BindingSetItem::Sampler(binding.binding, resource.sampler);
             break;
         case ShaderResourceType::SampledImage:
             if (resource.kind != NvrhiBindingResourceKind::Texture || resource.texture == nullptr) {
-                throw std::invalid_argument("A reflected sampled image requires an NVRHI texture resource.");
+                throw std::invalid_argument(
+                        "A reflected sampled image requires an NVRHI texture resource.");
             }
             result = nvrhi::BindingSetItem::Texture_SRV(binding.binding, resource.texture,
                     resource.format, resource.subresources, resource.dimension);
             break;
         case ShaderResourceType::StorageImage:
             if (resource.kind != NvrhiBindingResourceKind::Texture || resource.texture == nullptr) {
-                throw std::invalid_argument("A reflected storage image requires an NVRHI texture resource.");
+                throw std::invalid_argument(
+                        "A reflected storage image requires an NVRHI texture resource.");
             }
             result = nvrhi::BindingSetItem::Texture_UAV(binding.binding, resource.texture,
                     resource.format, resource.subresources, resource.dimension);
             break;
         case ShaderResourceType::UniformBuffer:
             if (resource.kind != NvrhiBindingResourceKind::Buffer || resource.buffer == nullptr) {
-                throw std::invalid_argument("A reflected constant buffer requires an NVRHI buffer resource.");
+                throw std::invalid_argument(
+                        "A reflected constant buffer requires an NVRHI buffer resource.");
             }
-            result = nvrhi::BindingSetItem::ConstantBuffer(
-                    binding.binding, resource.buffer, resource.range);
+            result = nvrhi::BindingSetItem::ConstantBuffer(binding.binding, resource.buffer,
+                    resource.range);
             break;
         case ShaderResourceType::StorageBuffer:
         case ShaderResourceType::StorageBufferReadOnly:
             if (resource.kind != NvrhiBindingResourceKind::Buffer || resource.buffer == nullptr) {
-                throw std::invalid_argument("A reflected buffer SRV requires an NVRHI buffer resource.");
+                throw std::invalid_argument(
+                        "A reflected buffer SRV requires an NVRHI buffer resource.");
             }
-            result = nvrhi::BindingSetItem::RawBuffer_SRV(
-                    binding.binding, resource.buffer, resource.range);
+            result = nvrhi::BindingSetItem::RawBuffer_SRV(binding.binding, resource.buffer,
+                    resource.range);
             break;
         case ShaderResourceType::StorageBufferReadWrite:
             if (resource.kind != NvrhiBindingResourceKind::Buffer || resource.buffer == nullptr) {
-                throw std::invalid_argument("A reflected buffer UAV requires an NVRHI buffer resource.");
+                throw std::invalid_argument(
+                        "A reflected buffer UAV requires an NVRHI buffer resource.");
             }
-            result = nvrhi::BindingSetItem::RawBuffer_UAV(
-                    binding.binding, resource.buffer, resource.range);
+            result = nvrhi::BindingSetItem::RawBuffer_UAV(binding.binding, resource.buffer,
+                    resource.range);
             break;
         case ShaderResourceType::StructuredBufferReadOnly:
             if (resource.kind != NvrhiBindingResourceKind::Buffer || resource.buffer == nullptr) {
-                throw std::invalid_argument("A reflected structured buffer SRV requires an NVRHI buffer resource.");
+                throw std::invalid_argument(
+                        "A reflected structured buffer SRV requires an NVRHI buffer resource.");
             }
-            result = nvrhi::BindingSetItem::StructuredBuffer_SRV(
-                    binding.binding, resource.buffer, resource.format, resource.range);
+            result = nvrhi::BindingSetItem::StructuredBuffer_SRV(binding.binding, resource.buffer,
+                    resource.format, resource.range);
             break;
         case ShaderResourceType::StructuredBufferReadWrite:
             if (resource.kind != NvrhiBindingResourceKind::Buffer || resource.buffer == nullptr) {
-                throw std::invalid_argument("A reflected structured buffer UAV requires an NVRHI buffer resource.");
+                throw std::invalid_argument(
+                        "A reflected structured buffer UAV requires an NVRHI buffer resource.");
             }
-            result = nvrhi::BindingSetItem::StructuredBuffer_UAV(
-                    binding.binding, resource.buffer, resource.format, resource.range);
+            result = nvrhi::BindingSetItem::StructuredBuffer_UAV(binding.binding, resource.buffer,
+                    resource.format, resource.range);
             break;
         case ShaderResourceType::UniformTexelBuffer:
             if (resource.kind != NvrhiBindingResourceKind::Buffer || resource.buffer == nullptr) {
-                throw std::invalid_argument("A reflected typed buffer SRV requires an NVRHI buffer resource.");
+                throw std::invalid_argument(
+                        "A reflected typed buffer SRV requires an NVRHI buffer resource.");
             }
-            result = nvrhi::BindingSetItem::TypedBuffer_SRV(
-                    binding.binding, resource.buffer, resource.format, resource.range);
+            result = nvrhi::BindingSetItem::TypedBuffer_SRV(binding.binding, resource.buffer,
+                    resource.format, resource.range);
             break;
         case ShaderResourceType::StorageTexelBuffer:
             if (resource.kind != NvrhiBindingResourceKind::Buffer || resource.buffer == nullptr) {
-                throw std::invalid_argument("A reflected typed buffer UAV requires an NVRHI buffer resource.");
+                throw std::invalid_argument(
+                        "A reflected typed buffer UAV requires an NVRHI buffer resource.");
             }
-            result = nvrhi::BindingSetItem::TypedBuffer_UAV(
-                    binding.binding, resource.buffer, resource.format, resource.range);
+            result = nvrhi::BindingSetItem::TypedBuffer_UAV(binding.binding, resource.buffer,
+                    resource.format, resource.range);
             break;
         case ShaderResourceType::CombinedImageSampler:
-            throw std::invalid_argument("Combined image samplers are not supported by NVRHI binding sets.");
+            throw std::invalid_argument(
+                    "Combined image samplers are not supported by NVRHI binding sets.");
     }
     result.setArrayElement(resource.array_element);
     return result;
@@ -286,9 +292,8 @@ nvrhi::BindingSetItem toNvrhiBindingSetItem(
 
 } // namespace
 
-NvrhiBindingResource NvrhiBindingResource::Texture(
-        std::string name, nvrhi::ITexture& texture, uint32_t array_element)
-{
+NvrhiBindingResource NvrhiBindingResource::Texture(std::string name, nvrhi::ITexture& texture,
+        uint32_t array_element) {
     NvrhiBindingResource result;
     result.name = std::move(name);
     result.kind = NvrhiBindingResourceKind::Texture;
@@ -297,9 +302,8 @@ NvrhiBindingResource NvrhiBindingResource::Texture(
     return result;
 }
 
-NvrhiBindingResource NvrhiBindingResource::Buffer(
-        std::string name, nvrhi::IBuffer& buffer, uint32_t array_element)
-{
+NvrhiBindingResource NvrhiBindingResource::Buffer(std::string name, nvrhi::IBuffer& buffer,
+        uint32_t array_element) {
     NvrhiBindingResource result;
     result.name = std::move(name);
     result.kind = NvrhiBindingResourceKind::Buffer;
@@ -308,9 +312,8 @@ NvrhiBindingResource NvrhiBindingResource::Buffer(
     return result;
 }
 
-NvrhiBindingResource NvrhiBindingResource::Sampler(
-        std::string name, nvrhi::ISampler& sampler, uint32_t array_element)
-{
+NvrhiBindingResource NvrhiBindingResource::Sampler(std::string name, nvrhi::ISampler& sampler,
+        uint32_t array_element) {
     NvrhiBindingResource result;
     result.name = std::move(name);
     result.kind = NvrhiBindingResourceKind::Sampler;
@@ -321,33 +324,34 @@ NvrhiBindingResource NvrhiBindingResource::Sampler(
 
 NvrhiGraphicsShaderSet createNvrhiGraphicsShaderSet(nvrhi::IDevice& device,
         const CompiledGraphicsProgram& program, std::string_view debug_name,
-        uint32_t bindless_capacity)
-{
+        uint32_t bindless_capacity) {
     NvrhiGraphicsShaderSet result;
-    result.vertex_shader = createShader(device, program.vertex, nvrhi::ShaderType::Vertex, debug_name);
-    result.pixel_shader = createShader(device, program.fragment, nvrhi::ShaderType::Pixel, debug_name);
+    const std::string base_name{ debug_name };
+    result.vertex_shader = createShader(device, program.vertex, nvrhi::ShaderType::Vertex,
+            base_name.empty() ? std::string{} : base_name + " Vertex Shader");
+    result.pixel_shader = createShader(device, program.fragment, nvrhi::ShaderType::Pixel,
+            base_name.empty() ? std::string{} : base_name + " Fragment Shader");
     result.binding_layouts = createBindingLayouts(device, program.reflection, bindless_capacity);
     return result;
 }
 
 NvrhiComputeShaderSet createNvrhiComputeShaderSet(nvrhi::IDevice& device,
         const CompiledComputeProgram& program, std::string_view debug_name,
-        uint32_t bindless_capacity)
-{
+        uint32_t bindless_capacity) {
     NvrhiComputeShaderSet result;
-    result.compute_shader = createShader(device, program.compute, nvrhi::ShaderType::Compute, debug_name);
+    result.compute_shader =
+            createShader(device, program.compute, nvrhi::ShaderType::Compute, debug_name);
     result.binding_layouts = createBindingLayouts(device, program.reflection, bindless_capacity);
     return result;
 }
 
 nvrhi::BindingSetHandle createNvrhiBindingSet(nvrhi::IDevice& device,
-        const ShaderReflection& reflection, uint32_t descriptor_set,
-        nvrhi::IBindingLayout& layout, std::span<const NvrhiBindingResource> resources)
-{
+        const ShaderReflection& reflection, uint32_t descriptor_set, nvrhi::IBindingLayout& layout,
+        std::span<const NvrhiBindingResource> resources) {
     std::vector<bool> resource_used(resources.size(), false);
     nvrhi::BindingSetDesc desc;
 
-    for (const ReflectedShaderBinding& binding : reflection.bindings) {
+    for (const ReflectedShaderBinding& binding: reflection.bindings) {
         if (binding.set != descriptor_set) {
             continue;
         }
@@ -377,7 +381,7 @@ nvrhi::BindingSetHandle createNvrhiBindingSet(nvrhi::IDevice& device,
     }
 
     if (descriptor_set == 0) {
-        for (const ReflectedPushConstantRange& push_constant : reflection.push_constants) {
+        for (const ReflectedPushConstantRange& push_constant: reflection.push_constants) {
             const auto existing = std::ranges::find_if(desc.bindings, [](const auto& item) {
                 return item.type == nvrhi::ResourceType::PushConstants;
             });

@@ -1,6 +1,6 @@
 #include "texture_cube.h"
-#include "detail/texture_format.h"
 #include "detail/texture_access.h"
+#include "detail/texture_format.h"
 #include "vulkan/nvrhi_resource_upload.h"
 
 #include <nvrhi/nvrhi.h>
@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -19,7 +20,6 @@ struct TextureCube::Impl {
     uint32_t size{ 0 };
     uint32_t mip_levels{ 0 };
     TextureFormat format{ TextureFormat::RGBA8Srgb };
-
 };
 
 TextureCube::TextureCube(std::unique_ptr<Impl> impl) noexcept
@@ -35,9 +35,9 @@ uint32_t TextureCube::mipLevels() const noexcept { return m_impl->mip_levels; }
 
 TextureFormat TextureCube::format() const noexcept { return m_impl->format; }
 
-TextureCube detail::TextureAccess::createCube(nvrhi::IDevice& device,
-        ResourceOwnerPtr owner, std::span<const TextureCubeMipData> mip_levels,
-        TextureFormat format) {
+TextureCube detail::TextureAccess::createCube(nvrhi::IDevice& device, ResourceOwnerPtr owner,
+        std::span<const TextureCubeMipData> mip_levels, TextureFormat format,
+        std::string_view debug_name) {
     if (!owner || mip_levels.empty() || mip_levels.front().size == 0) {
         throw std::invalid_argument(
                 "A cube texture requires an owner and at least one non-zero mip level.");
@@ -84,8 +84,8 @@ TextureCube detail::TextureAccess::createCube(nvrhi::IDevice& device,
         const auto ordered_faces = mip.faces.ordered();
         for (uint32_t layer = 0; layer < ordered_faces.size(); ++layer) {
             const auto face = ordered_faces[layer];
-            uploads.push_back({layer, mip_level, face,
-                    static_cast<size_t>(mip.size) * bytes_per_texel, 0});
+            uploads.push_back(
+                    { layer, mip_level, face, static_cast<size_t>(mip.size) * bytes_per_texel, 0 });
         }
     }
 
@@ -97,9 +97,9 @@ TextureCube detail::TextureAccess::createCube(nvrhi::IDevice& device,
             .setMipLevels(static_cast<uint32_t>(mip_levels.size()))
             .setDimension(nvrhi::TextureDimension::TextureCube)
             .setFormat(detail::toNvrhiFormat(format))
-            .setDebugName("ArtiChoco TextureCube");
-    impl->texture = vulkan::createAndUploadNvrhiTexture(device, std::move(texture_desc),
-            uploads, nvrhi::ResourceStates::ShaderResource);
+            .setDebugName(debug_name.empty() ? "ArtiChoco TextureCube" : std::string{ debug_name });
+    impl->texture = vulkan::createAndUploadNvrhiTexture(device, std::move(texture_desc), uploads,
+            nvrhi::ResourceStates::ShaderResource);
     impl->owner = std::move(owner);
     impl->size = base_size;
     impl->mip_levels = static_cast<uint32_t>(mip_levels.size());

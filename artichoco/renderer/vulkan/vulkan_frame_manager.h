@@ -64,6 +64,9 @@ public:
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
     size_t frameSlotCount() const noexcept;
+    uint32_t swapchainWidth() const noexcept;
+    uint32_t swapchainHeight() const noexcept;
+    bool swapchainIsRenderable() const noexcept;
 
 private:
     void recoverAbandonedFrame();

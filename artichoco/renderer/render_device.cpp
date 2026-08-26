@@ -2,8 +2,8 @@
 #include "artichoco/renderer/detail/resource_owner.h"
 #include "artichoco/renderer/renderer_log.h"
 #include "artichoco/renderer/slang_compiler.h"
-#include "artichoco/renderer/vulkan/nvrhi_shader_factory.h"
 #include "artichoco/renderer/vulkan/nvrhi_resource_smoke.h"
+#include "artichoco/renderer/vulkan/nvrhi_shader_factory.h"
 #include "artichoco/renderer/vulkan/nvrhi_vulkan_device.h"
 #include "artichoco/renderer/vulkan/vulkan_context.h"
 #include "artichoco/renderer/vulkan/vulkan_device.h"
@@ -50,24 +50,26 @@ struct RenderDevice::Impl final : detail::ResourceOwner,
 
     void shutdown();
 
-    bool renderFrame(std::span<RenderPass* const> passes);
+    RenderFrameResult renderFrame(std::span<RenderPass* const> passes);
     bool renderNvrhiClearFrame(const std::array<float, 4>& clear_color);
     bool nvrhiComputeShaderSmoke(const std::filesystem::path& source_path);
     bool nvrhiResourceSmoke();
     bool supportsBindlessTextures() const noexcept;
+    RenderFormatSupport queryFormatSupport(RenderDeviceFormat format) const noexcept;
+    RenderSwapchainInfo swapchainInfo() const noexcept;
     void requestSwapchainRecreation() noexcept;
     void waitIdle() const;
 
     VertexBuffer createVertexBuffer(std::span<const std::byte> data, uint32_t vertex_count,
-            VertexBufferLayout layout);
+            VertexBufferLayout layout, std::string_view debug_name);
 
     IndexBuffer createIndexBuffer(std::span<const std::byte> data, uint32_t index_count,
-            IndexType index_type);
+            IndexType index_type, std::string_view debug_name);
 
     Texture2D createTexture2D(std::span<const std::byte> texels, uint32_t width, uint32_t height,
-            TextureFormat format, bool generate_mipmaps);
+            TextureFormat format, bool generate_mipmaps, std::string_view debug_name);
     TextureCube createTextureCube(std::span<const TextureCubeMipData> mip_levels,
-            TextureFormat format);
+            TextureFormat format, std::string_view debug_name);
 
 
 private:
@@ -111,68 +113,65 @@ void RenderDevice::Impl::shutdown() {
 
 #pragma region ResourceCreation
 VertexBuffer RenderDevice::Impl::createVertexBuffer(std::span<const std::byte> data,
-        uint32_t vertex_count, VertexBufferLayout layout) {
-    return detail::BufferAccess::createVertexBuffer(m_nvrhi_device.device(),
-            shared_from_this(), data, vertex_count, std::move(layout));
+        uint32_t vertex_count, VertexBufferLayout layout, std::string_view debug_name) {
+    return detail::BufferAccess::createVertexBuffer(m_nvrhi_device.device(), shared_from_this(),
+            data, vertex_count, std::move(layout), debug_name);
 }
 
 IndexBuffer RenderDevice::Impl::createIndexBuffer(std::span<const std::byte> data,
-        uint32_t index_count, IndexType index_type) {
-    return detail::BufferAccess::createIndexBuffer(m_nvrhi_device.device(),
-            shared_from_this(), data, index_count, index_type);
+        uint32_t index_count, IndexType index_type, std::string_view debug_name) {
+    return detail::BufferAccess::createIndexBuffer(m_nvrhi_device.device(), shared_from_this(),
+            data, index_count, index_type, debug_name);
 }
 
 Texture2D RenderDevice::Impl::createTexture2D(std::span<const std::byte> texels, uint32_t width,
-        uint32_t height, TextureFormat format, bool generate_mipmaps) {
-    return detail::TextureAccess::create(m_nvrhi_device.device(),
-            shared_from_this(), texels, width, height, format, generate_mipmaps);
+        uint32_t height, TextureFormat format, bool generate_mipmaps, std::string_view debug_name) {
+    return detail::TextureAccess::create(m_nvrhi_device.device(), shared_from_this(), texels, width,
+            height, format, generate_mipmaps, debug_name);
 }
 
 TextureCube RenderDevice::Impl::createTextureCube(std::span<const TextureCubeMipData> mip_levels,
-        TextureFormat format) {
-    return detail::TextureAccess::createCube(m_nvrhi_device.device(),
-            shared_from_this(), mip_levels, format);
+        TextureFormat format, std::string_view debug_name) {
+    return detail::TextureAccess::createCube(m_nvrhi_device.device(), shared_from_this(),
+            mip_levels, format, debug_name);
 }
 
 #pragma endregion ResourceCreation
 
 #pragma region RenderDeviceFrame
-bool RenderDevice::Impl::renderFrame(std::span<RenderPass* const> passes)
-{
-    if (passes.empty() || std::ranges::any_of(passes,
-                                  [](const RenderPass* pass) { return pass == nullptr; })) {
+RenderFrameResult RenderDevice::Impl::renderFrame(std::span<RenderPass* const> passes) {
+    if (passes.empty() ||
+            std::ranges::any_of(passes, [](const RenderPass* pass) { return pass == nullptr; })) {
         throw std::invalid_argument("RenderDevice requires at least one valid NVRHI render pass.");
     }
 
     const auto result = m_frame_manager.renderNvrhiFrame([&](vulkan::NvrhiFrameContext& frame) {
-        RenderPassPrepareContext prepare_context{
-                m_nvrhi_device.device(), frame.framebuffer(), m_frame_manager.frameSlotCount()};
-        for (RenderPass* pass : passes) {
+        RenderPassPrepareContext prepare_context{ m_nvrhi_device.device(), frame.framebuffer(),
+            m_frame_manager.frameSlotCount() };
+        for (RenderPass* pass: passes) {
             pass->prepare(prepare_context);
         }
 
-        RenderPassContext pass_context{
-                m_nvrhi_device.device(), frame.commands(), frame.framebuffer(),
-                frame.colorTexture(), frame.frameSlotIndex(), frame.imageIndex(), this};
-        for (RenderPass* pass : passes) {
+        RenderPassContext pass_context{ m_nvrhi_device.device(), frame.commands(),
+            frame.framebuffer(), frame.colorTexture(), frame.frameSlotIndex(), frame.imageIndex(),
+            this };
+        for (RenderPass* pass: passes) {
             pass->record(pass_context);
         }
     });
-    return result.rendered;
+    return { result.completed_frame_slot, result.submitted_frame_slot, result.rendered };
 }
 
-bool RenderDevice::Impl::renderNvrhiClearFrame(const std::array<float, 4>& clear_color)
-{
+bool RenderDevice::Impl::renderNvrhiClearFrame(const std::array<float, 4>& clear_color) {
     const auto result = m_frame_manager.renderNvrhiClearFrame(
-            nvrhi::Color{clear_color[0], clear_color[1], clear_color[2], clear_color[3]});
+            nvrhi::Color{ clear_color[0], clear_color[1], clear_color[2], clear_color[3] });
     return result.rendered;
 }
 
-bool RenderDevice::Impl::nvrhiComputeShaderSmoke(const std::filesystem::path& source_path)
-{
-    const CompiledComputeProgram program = SlangCompiler::compileCompute({source_path});
-    const auto shader_set = vulkan::createNvrhiComputeShaderSet(
-            m_nvrhi_device.device(), program, "ArtiChoco NVRHI compute smoke");
+bool RenderDevice::Impl::nvrhiComputeShaderSmoke(const std::filesystem::path& source_path) {
+    const CompiledComputeProgram program = SlangCompiler::compileCompute({ source_path });
+    const auto shader_set = vulkan::createNvrhiComputeShaderSet(m_nvrhi_device.device(), program,
+            "ArtiChoco NVRHI compute smoke");
     if (!shader_set.compute_shader || shader_set.binding_layouts.empty() ||
             !shader_set.binding_layouts.front()) {
         return false;
@@ -212,15 +211,15 @@ bool RenderDevice::Impl::nvrhiComputeShaderSmoke(const std::filesystem::path& so
         vulkan::NvrhiBindingResource::Sampler("source_sampler", *sampler),
         vulkan::NvrhiBindingResource::Texture("output_texture", *output_texture),
     };
-    nvrhi::BindingSetHandle binding_set = vulkan::createNvrhiBindingSet(device,
-            program.reflection, 0, *shader_set.binding_layouts.front(), resources);
+    nvrhi::BindingSetHandle binding_set = vulkan::createNvrhiBindingSet(device, program.reflection,
+            0, *shader_set.binding_layouts.front(), resources);
     if (!binding_set) {
         return false;
     }
 
     nvrhi::ComputePipelineDesc pipeline_desc;
     pipeline_desc.setComputeShader(shader_set.compute_shader);
-    for (const nvrhi::BindingLayoutHandle& layout : shader_set.binding_layouts) {
+    for (const nvrhi::BindingLayoutHandle& layout: shader_set.binding_layouts) {
         if (layout) {
             pipeline_desc.addBindingLayout(layout);
         }
@@ -235,10 +234,70 @@ bool RenderDevice::Impl::nvrhiComputeShaderSmoke(const std::filesystem::path& so
         return false;
     }
     constexpr std::array<uint8_t, 4 * 4 * 4> source_data = {
-        255, 32, 16, 255, 255, 32, 16, 255, 255, 32, 16, 255, 255, 32, 16, 255,
-        255, 32, 16, 255, 255, 32, 16, 255, 255, 32, 16, 255, 255, 32, 16, 255,
-        255, 32, 16, 255, 255, 32, 16, 255, 255, 32, 16, 255, 255, 32, 16, 255,
-        255, 32, 16, 255, 255, 32, 16, 255, 255, 32, 16, 255, 255, 32, 16, 255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
+        255,
+        32,
+        16,
+        255,
     };
     const float time = 0.0f;
     nvrhi::ComputeState compute_state;
@@ -257,28 +316,85 @@ bool RenderDevice::Impl::nvrhiComputeShaderSmoke(const std::filesystem::path& so
     }
 
     size_t row_pitch = 0;
-    const auto* readback = static_cast<const uint8_t*>(device.mapStagingTexture(
-            readback_texture, nvrhi::TextureSlice{}, nvrhi::CpuAccessMode::Read, &row_pitch));
+    const auto* readback = static_cast<const uint8_t*>(device.mapStagingTexture(readback_texture,
+            nvrhi::TextureSlice{}, nvrhi::CpuAccessMode::Read, &row_pitch));
     if (readback == nullptr || row_pitch < 4 * 4) {
         if (readback != nullptr) {
             device.unmapStagingTexture(readback_texture);
         }
         return false;
     }
-    const bool output_valid = readback[0] != 0 && readback[1] != 0 &&
-            readback[2] != 0 && readback[3] == 255;
+    const bool output_valid =
+            readback[0] != 0 && readback[1] != 0 && readback[2] != 0 && readback[3] == 255;
     device.unmapStagingTexture(readback_texture);
     return output_valid;
 }
 
-bool RenderDevice::Impl::nvrhiResourceSmoke()
-{
+bool RenderDevice::Impl::nvrhiResourceSmoke() {
     return vulkan::runNvrhiResourceSmoke(m_nvrhi_device);
 }
 
-bool RenderDevice::Impl::supportsBindlessTextures() const noexcept
-{
+bool RenderDevice::Impl::supportsBindlessTextures() const noexcept {
     return m_device.descriptorIndexingEnabled();
+}
+
+RenderFormatSupport RenderDevice::Impl::queryFormatSupport(
+        RenderDeviceFormat format) const noexcept {
+    nvrhi::Format nvrhi_format = nvrhi::Format::UNKNOWN;
+    vk::Format vulkan_format = vk::Format::eUndefined;
+    bool depth = false;
+    switch (format) {
+        case RenderDeviceFormat::RGBA8Unorm:
+            nvrhi_format = nvrhi::Format::RGBA8_UNORM;
+            vulkan_format = vk::Format::eR8G8B8A8Unorm;
+            break;
+        case RenderDeviceFormat::RGBA8Srgb:
+            nvrhi_format = nvrhi::Format::SRGBA8_UNORM;
+            vulkan_format = vk::Format::eR8G8B8A8Srgb;
+            break;
+        case RenderDeviceFormat::RGBA16Float:
+            nvrhi_format = nvrhi::Format::RGBA16_FLOAT;
+            vulkan_format = vk::Format::eR16G16B16A16Sfloat;
+            break;
+        case RenderDeviceFormat::D32Float:
+            nvrhi_format = nvrhi::Format::D32;
+            vulkan_format = vk::Format::eD32Sfloat;
+            depth = true;
+            break;
+    }
+
+    const nvrhi::FormatSupport support = m_nvrhi_device.device().queryFormatSupport(nvrhi_format);
+    const auto has = [support](nvrhi::FormatSupport flag) noexcept {
+        return (support & flag) != nvrhi::FormatSupport::None;
+    };
+    RenderFormatSupport result;
+    result.texture = has(nvrhi::FormatSupport::Texture);
+    result.shader_sample = has(nvrhi::FormatSupport::ShaderSample);
+    result.render_target = has(nvrhi::FormatSupport::RenderTarget);
+    result.depth_stencil = has(nvrhi::FormatSupport::DepthStencil);
+
+    if ((depth && !result.depth_stencil) || (!depth && !result.render_target)) {
+        return result;
+    }
+    try {
+        const vk::ImageUsageFlags usage = depth ? vk::ImageUsageFlagBits::eDepthStencilAttachment
+                                                : vk::ImageUsageFlagBits::eColorAttachment;
+        const vk::ImageFormatProperties properties =
+                m_device.physicalDevice().getImageFormatProperties(vulkan_format,
+                        vk::ImageType::e2D, vk::ImageTiling::eOptimal, usage, {});
+        result.sample_count_mask = static_cast<uint32_t>(properties.sampleCounts);
+    } catch (...) {
+        result.sample_count_mask = 0;
+    }
+    return result;
+}
+
+RenderSwapchainInfo RenderDevice::Impl::swapchainInfo() const noexcept {
+    return {
+        m_frame_manager.swapchainWidth(),
+        m_frame_manager.swapchainHeight(),
+        m_frame_manager.swapchainIsRenderable(),
+    };
 }
 
 #pragma endregion RenderDeviceFrame
@@ -296,55 +412,55 @@ RenderDevice::RenderDevice(core::Window& window,
 RenderDevice::~RenderDevice() { m_impl->shutdown(); }
 
 VertexBuffer RenderDevice::createVertexBuffer(std::span<const std::byte> data,
-        uint32_t vertex_count, VertexBufferLayout layout) {
-    return m_impl->createVertexBuffer(data, vertex_count, std::move(layout));
+        uint32_t vertex_count, VertexBufferLayout layout, std::string_view debug_name) {
+    return m_impl->createVertexBuffer(data, vertex_count, std::move(layout), debug_name);
 }
 
 IndexBuffer RenderDevice::createIndexBuffer(std::span<const std::byte> data, uint32_t index_count,
-        IndexType index_type) {
-    return m_impl->createIndexBuffer(data, index_count, index_type);
+        IndexType index_type, std::string_view debug_name) {
+    return m_impl->createIndexBuffer(data, index_count, index_type, debug_name);
 }
 
 Texture2D RenderDevice::createTexture2D(std::span<const std::byte> texels, uint32_t width,
-        uint32_t height, TextureFormat format, bool generate_mipmaps) {
-    return m_impl->createTexture2D(texels, width, height, format, generate_mipmaps);
+        uint32_t height, TextureFormat format, bool generate_mipmaps, std::string_view debug_name) {
+    return m_impl->createTexture2D(texels, width, height, format, generate_mipmaps, debug_name);
 }
 
 TextureCube RenderDevice::createTextureCube(const TextureCubeFaces& faces, uint32_t size,
-        TextureFormat format) {
+        TextureFormat format, std::string_view debug_name) {
     const TextureCubeMipData mip{ size, faces };
-    return m_impl->createTextureCube(std::span<const TextureCubeMipData>{ &mip, 1 }, format);
+    return m_impl->createTextureCube(std::span<const TextureCubeMipData>{ &mip, 1 }, format,
+            debug_name);
 }
 
 TextureCube RenderDevice::createTextureCube(std::span<const TextureCubeMipData> mip_levels,
-        TextureFormat format) {
-    return m_impl->createTextureCube(mip_levels, format);
+        TextureFormat format, std::string_view debug_name) {
+    return m_impl->createTextureCube(mip_levels, format, debug_name);
 }
 
-bool RenderDevice::renderFrame(std::span<RenderPass* const> passes)
-{
+RenderFrameResult RenderDevice::renderFrame(std::span<RenderPass* const> passes) {
     return m_impl->renderFrame(passes);
 }
 
-bool RenderDevice::renderNvrhiClearFrame(const std::array<float, 4>& clear_color)
-{
+bool RenderDevice::renderNvrhiClearFrame(const std::array<float, 4>& clear_color) {
     return m_impl->renderNvrhiClearFrame(clear_color);
 }
 
-bool RenderDevice::nvrhiComputeShaderSmoke(const std::filesystem::path& source_path)
-{
+bool RenderDevice::nvrhiComputeShaderSmoke(const std::filesystem::path& source_path) {
     return m_impl->nvrhiComputeShaderSmoke(source_path);
 }
 
-bool RenderDevice::nvrhiResourceSmoke()
-{
-    return m_impl->nvrhiResourceSmoke();
-}
+bool RenderDevice::nvrhiResourceSmoke() { return m_impl->nvrhiResourceSmoke(); }
 
-bool RenderDevice::supportsBindlessTextures() const noexcept
-{
+bool RenderDevice::supportsBindlessTextures() const noexcept {
     return m_impl->supportsBindlessTextures();
 }
+
+RenderFormatSupport RenderDevice::queryFormatSupport(RenderDeviceFormat format) const noexcept {
+    return m_impl->queryFormatSupport(format);
+}
+
+RenderSwapchainInfo RenderDevice::swapchainInfo() const noexcept { return m_impl->swapchainInfo(); }
 
 void RenderDevice::requestSwapchainRecreation() noexcept { m_impl->requestSwapchainRecreation(); }
 

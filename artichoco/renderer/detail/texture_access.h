@@ -6,6 +6,7 @@
 #include <cstddef>
 
 #include <span>
+#include <string_view>
 
 namespace nvrhi {
 class IDevice;
@@ -16,12 +17,12 @@ namespace arti::renderer::detail {
 
 class TextureAccess {
 public:
-    static Texture2D create(nvrhi::IDevice& device,
-            ResourceOwnerPtr owner, std::span<const std::byte> texels, uint32_t width,
-            uint32_t height, TextureFormat format, bool generate_mipmaps);
-    static TextureCube createCube(nvrhi::IDevice& device,
-            ResourceOwnerPtr owner, std::span<const TextureCubeMipData> mip_levels,
-            TextureFormat format);
+    static Texture2D create(nvrhi::IDevice& device, ResourceOwnerPtr owner,
+            std::span<const std::byte> texels, uint32_t width, uint32_t height,
+            TextureFormat format, bool generate_mipmaps, std::string_view debug_name);
+    static TextureCube createCube(nvrhi::IDevice& device, ResourceOwnerPtr owner,
+            std::span<const TextureCubeMipData> mip_levels, TextureFormat format,
+            std::string_view debug_name);
 
     static nvrhi::ITexture& nvrhiHandle(const Texture2D& texture) noexcept;
     static nvrhi::ITexture& nvrhiHandle(const TextureCube& texture) noexcept;
