@@ -4,7 +4,7 @@ namespace arti::renderer {
 
 const core::Logger::Channel& getLogChannel()
 {
-    static const auto channel = core::Logger::registerChannel("ArtiRenderer");
+    static const auto channel = core::Logger::registerChannel("ArtiRHI");
     return *channel;
 }
 
