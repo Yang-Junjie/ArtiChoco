@@ -4,6 +4,7 @@ add_library(artichoco_asset STATIC
     asset_log.cpp
     asset_manager.cpp
     asset_metadata.cpp
+    asset_settings.cpp
     asset_storage.cpp
 )
 add_library(ArtiChoco::Asset ALIAS artichoco_asset)

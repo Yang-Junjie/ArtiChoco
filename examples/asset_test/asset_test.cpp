@@ -127,25 +127,28 @@ private:
 
 class TestImporter final : public arti::asset::AssetImporter {
 public:
+    [[nodiscard]] std::string getName() const override { return "asset_test.TestImporter"; }
+
     [[nodiscard]] std::vector<std::string> getSupportedExtensions() const override {
         return { ".testasset" };
     }
 
     [[nodiscard]] arti::asset::AssetImportResult import(
-            const std::filesystem::path& source_path) override {
+            const arti::asset::AssetImportRequest& request) override {
+        const std::filesystem::path& source_path = request.source_path;
         ++m_import_count;
         try {
             const std::string contents = readSourceText(*m_storage, source_path);
 
             arti::asset::AssetImportOutput output;
-            output.metadata.handle = arti::core::UUID::generate();
-            output.metadata.type = std::string{ test_asset_type };
-            output.metadata.artifact_path = std::filesystem::path{ "Imported" } /
-                                            (output.metadata.handle.toString() + ".testartifact");
-            output.metadata.properties["importer"] = "asset_test.TestImporter";
-            output.metadata.properties["source_size"] = static_cast<uint64_t>(contents.size());
-            output.metadata.properties["preserve_text"] = true;
-            output.encoded = encode(output.metadata, source_path);
+            output.record.handle = arti::core::UUID::generate();
+            output.record.type = std::string{ test_asset_type };
+            output.record.artifact_path = std::filesystem::path{ "Imported" } /
+                                            (output.record.handle.toString() + ".testartifact");
+            output.record.properties["importer"] = "asset_test.TestImporter";
+            output.record.properties["source_size"] = static_cast<uint64_t>(contents.size());
+            output.record.properties["preserve_text"] = true;
+            output.encoded = toBytes(readSourceText(*m_storage, source_path));
 
             return { .outputs = { std::move(output) } };
         } catch (const std::exception& exception) {
@@ -156,22 +159,21 @@ public:
     [[nodiscard]] size_t getImportCount() const noexcept { return m_import_count; }
 
 private:
-    [[nodiscard]] std::vector<std::byte> encode(const arti::asset::AssetMetadata&,
-            const std::filesystem::path& source_path) const override {
-        return toBytes(readSourceText(*m_storage, source_path));
-    }
 
     size_t m_import_count{ 0 };
 };
 
 class TestModelImporter final : public arti::asset::AssetImporter {
 public:
+    [[nodiscard]] std::string getName() const override { return "asset_test.TestModelImporter"; }
+
     [[nodiscard]] std::vector<std::string> getSupportedExtensions() const override {
         return { ".testmodel" };
     }
 
     [[nodiscard]] arti::asset::AssetImportResult import(
-            const std::filesystem::path& source_path) override {
+            const arti::asset::AssetImportRequest& request) override {
+        const std::filesystem::path& source_path = request.source_path;
         ++m_import_count;
         try {
             arti::asset::AssetImportResult result;
@@ -200,31 +202,31 @@ private:
 
         arti::asset::AssetImportOutput output;
         const auto existing =
-                m_catalog->findBySourcePathAndType(identity, std::string{ type });
-        output.metadata.handle = existing ? existing->handle : arti::core::UUID::generate();
-        output.metadata.type = std::string{ type };
-        output.metadata.artifact_path = std::filesystem::path{ "Imported" } /
-                                        (output.metadata.handle.toString() + ".testsubartifact");
-        output.metadata.properties["index"] = index;
+                m_catalog->findBySourceAndLocalId(source_path, suffix);
+        output.record.handle = existing ? existing->handle : arti::core::UUID::generate();
+        output.record.type = std::string{ type };
+        output.record.artifact_path = std::filesystem::path{ "Imported" } /
+                                        (output.record.handle.toString() + ".testsubartifact");
+        output.record.properties["index"] = index;
         if (type == test_mesh_type) {
-            output.metadata.properties["material_slots"] =
+            output.record.properties["material_slots"] =
                     std::string{ "slot" } + std::to_string(index);
         }
-        output.source_suffix = std::move(suffix);
+        output.record.local_id = std::move(suffix);
         if (existing && hasCurrentFiles(*existing)) {
             output.already_imported = true;
         } else {
-            output.encoded = encode(output.metadata, source_path);
+            output.encoded = encode(output.record, source_path);
         }
         return output;
     }
 
-    [[nodiscard]] std::vector<std::byte> encode(const arti::asset::AssetMetadata& metadata,
-            const std::filesystem::path& source_path) const override {
+    [[nodiscard]] std::vector<std::byte> encode(const arti::asset::AssetRecord& record,
+            const std::filesystem::path& source_path) const {
         const std::string source = readSourceText(*m_storage, source_path);
-        const uint64_t index = std::get<uint64_t>(metadata.properties.at("index"));
+        const uint64_t index = std::get<uint64_t>(record.properties.at("index"));
         return toBytes(source +
-                       (metadata.type == test_mesh_type ? " mesh#" : " material#") +
+                       (record.type == test_mesh_type ? " mesh#" : " material#") +
                        std::to_string(index));
     }
 
@@ -233,19 +235,22 @@ private:
 
 class TestLinkedImporter final : public arti::asset::AssetImporter {
 public:
+    [[nodiscard]] std::string getName() const override { return "asset_test.TestLinkedImporter"; }
+
     [[nodiscard]] std::vector<std::string> getSupportedExtensions() const override {
         return { ".testlinked" };
     }
 
     [[nodiscard]] arti::asset::AssetImportResult import(
-            const std::filesystem::path& source_path) override {
+            const arti::asset::AssetImportRequest& request) override {
+        const std::filesystem::path& source_path = request.source_path;
         ++m_import_count;
         try {
             arti::asset::AssetImportResult result;
             const auto a = buildSubAsset(source_path, test_linked_a_type, {});
             result.outputs.push_back(a);
             result.outputs.push_back(buildSubAsset(source_path, test_linked_b_type, "#b",
-                    { a.metadata.handle }));
+                    { a.record.handle }));
             return result;
         } catch (const std::exception& exception) {
             return { .error = exception.what() };
@@ -263,25 +268,25 @@ private:
 
         arti::asset::AssetImportOutput output;
         const auto existing =
-                m_catalog->findBySourcePathAndType(identity, std::string{ type });
-        output.metadata.handle = existing ? existing->handle : arti::core::UUID::generate();
-        output.metadata.type = std::string{ type };
-        output.metadata.artifact_path = std::filesystem::path{ "Imported" } /
-                                        (output.metadata.handle.toString() + ".testlinkedartifact");
-        output.metadata.dependencies = std::move(dependencies);
-        output.source_suffix = std::move(suffix);
+                m_catalog->findBySourceAndLocalId(source_path, suffix);
+        output.record.handle = existing ? existing->handle : arti::core::UUID::generate();
+        output.record.type = std::string{ type };
+        output.record.artifact_path = std::filesystem::path{ "Imported" } /
+                                        (output.record.handle.toString() + ".testlinkedartifact");
+        output.record.dependencies = std::move(dependencies);
+        output.record.local_id = std::move(suffix);
         if (existing && hasCurrentFiles(*existing)) {
             output.already_imported = true;
         } else {
-            output.encoded = encode(output.metadata, source_path);
+            output.encoded = encode(output.record, source_path);
         }
         return output;
     }
 
-    [[nodiscard]] std::vector<std::byte> encode(const arti::asset::AssetMetadata& metadata,
-            const std::filesystem::path& source_path) const override {
+    [[nodiscard]] std::vector<std::byte> encode(const arti::asset::AssetRecord& record,
+            const std::filesystem::path& source_path) const {
         return toBytes(readSourceText(*m_storage, source_path) +
-                       (metadata.type == test_linked_a_type ? " linked-a" : " linked-b"));
+                       (record.type == test_linked_a_type ? " linked-a" : " linked-b"));
     }
 
     size_t m_import_count{ 0 };
@@ -289,27 +294,30 @@ private:
 
 class TestCyclicImporter final : public arti::asset::AssetImporter {
 public:
+    [[nodiscard]] std::string getName() const override { return "asset_test.TestCyclicImporter"; }
+
     [[nodiscard]] std::vector<std::string> getSupportedExtensions() const override {
         return { ".testcyclic" };
     }
 
     [[nodiscard]] arti::asset::AssetImportResult import(
-            const std::filesystem::path& source_path) override {
+            const arti::asset::AssetImportRequest& request) override {
+        const std::filesystem::path& source_path = request.source_path;
         ++m_import_count;
         try {
             arti::asset::AssetImportOutput output;
             const auto existing = m_catalog->findBySourcePathAndType(
                     source_path, std::string{ test_cyclic_type });
-            output.metadata.handle = existing ? existing->handle : arti::core::UUID::generate();
-            output.metadata.type = std::string{ test_cyclic_type };
-            output.metadata.artifact_path = std::filesystem::path{ "Imported" } /
-                                            (output.metadata.handle.toString() +
+            output.record.handle = existing ? existing->handle : arti::core::UUID::generate();
+            output.record.type = std::string{ test_cyclic_type };
+            output.record.artifact_path = std::filesystem::path{ "Imported" } /
+                                            (output.record.handle.toString() +
                                                     ".testcyclicartifact");
-            output.metadata.dependencies = { output.metadata.handle };
+            output.record.dependencies = { output.record.handle };
             if (existing && hasCurrentFiles(*existing)) {
                 output.already_imported = true;
             } else {
-                output.encoded = encode(output.metadata, source_path);
+                output.encoded = encode(output.record, source_path);
             }
 
             return { .outputs = { std::move(output) } };
@@ -321,8 +329,8 @@ public:
     [[nodiscard]] size_t getImportCount() const noexcept { return m_import_count; }
 
 private:
-    [[nodiscard]] std::vector<std::byte> encode(const arti::asset::AssetMetadata&,
-            const std::filesystem::path& source_path) const override {
+    [[nodiscard]] std::vector<std::byte> encode(const arti::asset::AssetRecord&,
+            const std::filesystem::path& source_path) const {
         return toBytes(readSourceText(*m_storage, source_path) + " cyclic");
     }
 
@@ -396,28 +404,26 @@ void require(bool condition, const std::string& message) {
 }
 
 std::vector<const arti::asset::AssetImportOutput*> collectOutputs(
-        const std::vector<arti::asset::AssetImportResult>& results, std::string_view type) {
+        const arti::asset::AssetImportResult& result, std::string_view type) {
     std::vector<const arti::asset::AssetImportOutput*> outputs;
-    for (const arti::asset::AssetImportResult& result : results) {
-        require(bool(result), "Import failed: " + result.error);
-        for (const arti::asset::AssetImportOutput& output : result.outputs) {
-            if (output.metadata.type == type) {
-                outputs.push_back(&output);
-            }
+    require(bool(result), "Import failed: " + result.error);
+    for (const arti::asset::AssetImportOutput& output : result.outputs) {
+        if (output.record.type == type) {
+            outputs.push_back(&output);
         }
     }
     return outputs;
 }
 
-const arti::asset::AssetMetadata* requireResult(
-        const std::vector<arti::asset::AssetImportResult>& results, std::string_view type,
+const arti::asset::AssetRecord* requireResult(
+        const arti::asset::AssetImportResult& result, std::string_view type,
         std::string_view operation) {
-    const auto outputs = collectOutputs(results, type);
+    const auto outputs = collectOutputs(result, type);
     if (outputs.empty()) {
         throw std::runtime_error(
                 std::string{ operation } + " did not produce the expected asset type.");
     }
-    return &outputs.front()->metadata;
+    return &outputs.front()->record;
 }
 
 void runAssetTest() {
@@ -498,15 +504,14 @@ void runAssetTest() {
             "Failed to register the cyclic loader.");
 
     asset_test::TestImporter unregistered;
-    require(assets.import(asset_source, unregistered).empty(),
+    require(!assets.import(asset_source, unregistered),
             "An unregistered importer should be rejected.");
 
-    std::vector<arti::asset::AssetImportResult> results =
+    const arti::asset::AssetImportResult results =
             assets.import(asset_source, *importer_view);
-    require(results.size() == 1, "Explicit import should run a single importer.");
-    const arti::asset::AssetMetadata* first =
+    const arti::asset::AssetRecord* first =
             requireResult(results, test_asset_type, "Initial asset import");
-    require(first->handle.isValid() && first->source_path == asset_source &&
+    require(first->handle.isValid() && first->local_id.empty() &&
                     importer_view->getImportCount() == 1,
             "Initial import returned unexpected metadata.");
     require(std::get<uint64_t>(first->properties.at("source_size")) == 14 &&
@@ -522,7 +527,11 @@ void runAssetTest() {
             "The declared artifact was not written.");
 
     const auto found = assets.catalog().find(first->handle);
-    require(found && *found == *first, "AssetCatalog lookup did not return the imported asset.");
+    require(found && found->handle == first->handle && found->type == first->type &&
+                    found->local_id == first->local_id &&
+                    found->source_path == asset_source &&
+                    found->artifact_path == first->artifact_path,
+            "AssetCatalog lookup did not return the imported asset.");
     require(assets.catalog().findBySourcePath(asset_source).size() == 1,
             "The imported asset was not found by its source path.");
 
@@ -548,9 +557,9 @@ void runAssetTest() {
             "Typed handles must be usable as map keys.");
 
     asset_test::writeTextFile(*asset_file, "second revision");
-    std::vector<arti::asset::AssetImportResult> reimported =
+    const arti::asset::AssetImportResult reimported =
             assets.import(asset_source, *importer_view);
-    const arti::asset::AssetMetadata* reimported_asset =
+    const arti::asset::AssetRecord* reimported_asset =
             requireResult(reimported, test_asset_type, "Asset reimport");
     require(reimported_asset->handle == first->handle &&
                     std::get<uint64_t>(reimported_asset->properties.at("source_size")) == 15 &&
@@ -575,9 +584,8 @@ void runAssetTest() {
                     asset_loader_view->getLoadCount() == 3,
             "Expired cached assets should be re-decoded on the next load.");
 
-    std::vector<arti::asset::AssetImportResult> model_results =
+    const arti::asset::AssetImportResult model_results =
             assets.import(mesh_source, *model_importer_view);
-    require(model_results.size() == 1, "Model import should run a single importer.");
     const auto mesh_outputs = collectOutputs(model_results, test_mesh_type);
     const auto material_outputs = collectOutputs(model_results, test_material_type);
     require(mesh_outputs.size() == 2 && material_outputs.size() == 2 &&
@@ -586,28 +594,32 @@ void runAssetTest() {
                     !material_outputs[1]->already_imported &&
                     model_importer_view->getImportCount() == 1,
             "Model import did not produce the expected sub-assets.");
-    require(mesh_outputs[0]->metadata.source_path ==
-                    std::filesystem::path{ "Content/example.testmodel#mesh_0" } &&
-                    mesh_outputs[1]->metadata.source_path ==
-                            std::filesystem::path{ "Content/example.testmodel#mesh_1" },
-            "Sub-assets must carry their own source identity.");
-    require(std::get<std::string>(mesh_outputs[0]->metadata.properties.at("material_slots")) ==
+    require(mesh_outputs[0]->record.local_id == "#mesh_0" &&
+                    mesh_outputs[1]->record.local_id == "#mesh_1",
+            "Sub-assets must carry their own local_id.");
+    require(std::get<std::string>(mesh_outputs[0]->record.properties.at("material_slots")) ==
                     "slot0" &&
                     std::get<std::string>(
-                            mesh_outputs[1]->metadata.properties.at("material_slots")) == "slot1",
+                            mesh_outputs[1]->record.properties.at("material_slots")) == "slot1",
             "Meshes must declare their material slots.");
-    require(assets.catalog().findBySourcePath(mesh_source).empty() &&
-                    assets.catalog().findBySourcePath(
-                            std::filesystem::path{ "Content/example.testmodel#mesh_0" })
-                                    .size() == 1,
-            "Sub-asset source paths must be distinct from the plain source path.");
+    // 一源一 sidecar：子资产不再拥有各自的 source_path，全部挂在源文件下面，
+    // 靠 local_id 区分。所以按源路径查会拿到全部 4 个产出。
+    require(assets.catalog().findBySourcePath(mesh_source).size() == 4,
+            "All sub-assets must be grouped under their source path.");
+    require(assets.catalog()
+                            .findBySourceAndLocalId(mesh_source, "#mesh_0")
+                            .has_value() &&
+                    assets.catalog()
+                            .findBySourceAndLocalId(mesh_source, "#material_0")
+                            .has_value(),
+            "Sub-assets must be addressable by (source_path, local_id).");
 
-    const auto mesh_artifact = assets.storage().resolveArtifactPath(mesh_outputs[0]->metadata.artifact_path);
+    const auto mesh_artifact = assets.storage().resolveArtifactPath(mesh_outputs[0]->record.artifact_path);
     require(mesh_artifact && std::filesystem::is_regular_file(*mesh_artifact) &&
                     asset_test::readTextFile(*mesh_artifact) == "composite source mesh#0",
             "The mesh sub-asset artifact was not written correctly.");
 
-    std::vector<arti::asset::AssetImportResult> model_reimported =
+    const arti::asset::AssetImportResult model_reimported =
             assets.import(mesh_source, *model_importer_view);
     const auto mesh_outputs_reused = collectOutputs(model_reimported, test_mesh_type);
     const auto material_outputs_reused = collectOutputs(model_reimported, test_material_type);
@@ -616,18 +628,19 @@ void runAssetTest() {
                     mesh_outputs_reused[1]->already_imported &&
                     material_outputs_reused[0]->already_imported &&
                     material_outputs_reused[1]->already_imported &&
-                    mesh_outputs_reused[0]->metadata.handle == mesh_outputs[0]->metadata.handle &&
-                    mesh_outputs_reused[1]->metadata.handle == mesh_outputs[1]->metadata.handle &&
-                    material_outputs_reused[0]->metadata.handle ==
-                            material_outputs[0]->metadata.handle &&
-                    material_outputs_reused[1]->metadata.handle ==
-                            material_outputs[1]->metadata.handle,
+                    mesh_outputs_reused[0]->record.handle == mesh_outputs[0]->record.handle &&
+                    mesh_outputs_reused[1]->record.handle == mesh_outputs[1]->record.handle &&
+                    material_outputs_reused[0]->record.handle ==
+                            material_outputs[0]->record.handle &&
+                    material_outputs_reused[1]->record.handle ==
+                            material_outputs[1]->record.handle,
             "The importer must reuse existing sub-asset metadata on reimport.");
 
+    // 一源一 sidecar：删掉那一份 .meta，全部产出都要重新编码。
+    // 粒度从"每个子资产一份"变成"每个源文件一份"，这是 v2 格式的直接后果。
     std::error_code ignored;
-    std::filesystem::remove(mesh_file->string() + "#mesh_0.meta", ignored);
-    std::filesystem::remove(mesh_file->string() + "#mesh_1.meta", ignored);
-    std::vector<arti::asset::AssetImportResult> model_regenerated =
+    std::filesystem::remove(mesh_file->string() + ".meta", ignored);
+    const arti::asset::AssetImportResult model_regenerated =
             assets.import(mesh_source, *model_importer_view);
     const auto mesh_outputs_regenerated = collectOutputs(model_regenerated, test_mesh_type);
     const auto material_outputs_regenerated =
@@ -636,25 +649,26 @@ void runAssetTest() {
                     !mesh_outputs_regenerated[0]->already_imported &&
                     !mesh_outputs_regenerated[1]->already_imported &&
                     material_outputs_regenerated.size() == 2 &&
-                    material_outputs_regenerated[0]->already_imported &&
-                    material_outputs_regenerated[1]->already_imported,
-            "Missing .meta files must trigger a reimport of only the affected sub-assets.");
-    require(mesh_outputs_regenerated[0]->metadata.handle == mesh_outputs[0]->metadata.handle &&
-                    mesh_outputs_regenerated[1]->metadata.handle == mesh_outputs[1]->metadata.handle,
+                    !material_outputs_regenerated[0]->already_imported &&
+                    !material_outputs_regenerated[1]->already_imported,
+            "Removing the sidecar must trigger a reimport of every output of that source.");
+    require(std::filesystem::is_regular_file(mesh_file->string() + ".meta"),
+            "The reimport must rewrite the source's sidecar.");
+    require(mesh_outputs_regenerated[0]->record.handle == mesh_outputs[0]->record.handle &&
+                    mesh_outputs_regenerated[1]->record.handle == mesh_outputs[1]->record.handle,
             "The AssetManager must preserve sub-asset identities via the suffix-aware lookup.");
 
-    require(assets.catalog().find(mesh_outputs[0]->metadata.handle).has_value() &&
-                    assets.catalog().find(mesh_outputs[1]->metadata.handle).has_value() &&
-                    assets.catalog().find(material_outputs[0]->metadata.handle).has_value() &&
-                    assets.catalog().find(material_outputs[1]->metadata.handle).has_value(),
+    require(assets.catalog().find(mesh_outputs[0]->record.handle).has_value() &&
+                    assets.catalog().find(mesh_outputs[1]->record.handle).has_value() &&
+                    assets.catalog().find(material_outputs[0]->record.handle).has_value() &&
+                    assets.catalog().find(material_outputs[1]->record.handle).has_value(),
             "Sub-assets were not stored in the catalog.");
 
-    std::vector<arti::asset::AssetImportResult> linked_results =
+    const arti::asset::AssetImportResult linked_results =
             assets.import(linked_source, *linked_importer_view);
-    require(linked_results.size() == 1, "Linked import should run a single importer.");
-    const arti::asset::AssetMetadata* linked_a =
+    const arti::asset::AssetRecord* linked_a =
             requireResult(linked_results, test_linked_a_type, "Linked import");
-    const arti::asset::AssetMetadata* linked_b =
+    const arti::asset::AssetRecord* linked_b =
             requireResult(linked_results, test_linked_b_type, "Linked import");
     require(linked_importer_view->getImportCount() == 1 &&
                     linked_b->dependencies == std::vector<arti::core::UUID>{ linked_a->handle },
@@ -677,11 +691,11 @@ void runAssetTest() {
     require(reloaded_b && assets.getAsset(linked_a->handle) != nullptr,
             "Loading linked-b must recursively reload linked-a.");
 
-    std::vector<arti::asset::AssetImportResult> linked_again =
+    const arti::asset::AssetImportResult linked_again =
             assets.import(linked_source, *linked_importer_view);
-    const arti::asset::AssetMetadata* linked_a_again =
+    const arti::asset::AssetRecord* linked_a_again =
             requireResult(linked_again, test_linked_a_type, "Linked reimport");
-    const arti::asset::AssetMetadata* linked_b_again =
+    const arti::asset::AssetRecord* linked_b_again =
             requireResult(linked_again, test_linked_b_type, "Linked reimport");
     require(linked_a_again->handle == linked_a->handle &&
                     linked_b_again->handle == linked_b->handle &&
@@ -691,9 +705,9 @@ void runAssetTest() {
                             std::vector<arti::core::UUID>{ linked_b->handle },
             "Linked reimport must preserve handles and the dependency index.");
 
-    std::vector<arti::asset::AssetImportResult> cyclic_results =
+    const arti::asset::AssetImportResult cyclic_results =
             assets.import(cyclic_source, *cyclic_importer_view);
-    const arti::asset::AssetMetadata* cyclic =
+    const arti::asset::AssetRecord* cyclic =
             requireResult(cyclic_results, test_cyclic_type, "Cyclic import");
     require(cyclic_importer_view->getImportCount() == 1 &&
                     cyclic->dependencies == std::vector<arti::core::UUID>{ cyclic->handle },
@@ -720,10 +734,10 @@ void runAssetTest() {
     require(reopened_assets.catalog().importedCount() == 8,
             "The AssetCatalog did not rebuild itself from the persisted metadata files.");
     require(reopened_assets.catalog().find(first->handle).has_value() &&
-                    reopened_assets.catalog().find(mesh_outputs[0]->metadata.handle).has_value() &&
-                    reopened_assets.catalog().find(mesh_outputs[1]->metadata.handle).has_value() &&
-                    reopened_assets.catalog().find(material_outputs[0]->metadata.handle).has_value() &&
-                    reopened_assets.catalog().find(material_outputs[1]->metadata.handle).has_value() &&
+                    reopened_assets.catalog().find(mesh_outputs[0]->record.handle).has_value() &&
+                    reopened_assets.catalog().find(mesh_outputs[1]->record.handle).has_value() &&
+                    reopened_assets.catalog().find(material_outputs[0]->record.handle).has_value() &&
+                    reopened_assets.catalog().find(material_outputs[1]->record.handle).has_value() &&
                     reopened_assets.catalog().find(linked_a->handle).has_value() &&
                     reopened_assets.catalog().find(linked_b->handle).has_value() &&
                     reopened_assets.catalog().find(cyclic->handle).has_value(),
@@ -748,7 +762,7 @@ void runAssetTest() {
 
     const auto restored_asset = reopened_assets.load<asset_test::TestTextAsset>(first->handle);
     const auto restored_mesh =
-            reopened_assets.load<asset_test::TestTextAsset>(mesh_outputs[0]->metadata.handle);
+            reopened_assets.load<asset_test::TestTextAsset>(mesh_outputs[0]->record.handle);
     const auto restored_b = reopened_assets.load<asset_test::TestTextAsset>(linked_b->handle);
     require(restored_asset && restored_asset->getContents() == "second revision" &&
                     restored_mesh && restored_mesh->getContents() == "composite source mesh#0" &&

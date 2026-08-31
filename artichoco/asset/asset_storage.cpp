@@ -2,6 +2,7 @@
 
 #include "asset_log.h"
 
+#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <system_error>
@@ -79,71 +80,209 @@ void AssetStorage::close() noexcept {
     m_artifacts_root.clear();
 }
 
-std::optional<std::vector<AssetMetadata>> AssetStorage::scanMetadata() const {
+MetadataScan AssetStorage::scanMetadata() const {
+    MetadataScan scan;
     if (!isOpen()) {
+        scan.traversal_error = "AssetStorage is not open";
         getLogChannel().warn("Cannot scan Asset metadata: AssetStorage is not open");
-        return std::nullopt;
+        return scan;
     }
 
-    std::vector<AssetMetadata> metadata;
     std::error_code error;
     std::filesystem::recursive_directory_iterator iterator{ m_assets_root,
         std::filesystem::directory_options::skip_permission_denied, error };
     const std::filesystem::recursive_directory_iterator end;
     while (!error && iterator != end) {
         if (iterator->is_regular_file(error)) {
-            const std::string relative_name =
-                    std::filesystem::relative(iterator->path(), m_assets_root, error)
-                            .generic_string();
+            const std::filesystem::path relative =
+                    std::filesystem::relative(iterator->path(), m_assets_root, error);
+            const std::string relative_name = relative.generic_string();
             if (!error && relative_name.ends_with(kAssetMetadataExtension)) {
                 const std::filesystem::path source_path{ relative_name.substr(
                         0, relative_name.size() - kAssetMetadataExtension.size()) };
 
                 std::string text;
                 if (!readFile(iterator->path(), text)) {
-                    getLogChannel().error("Failed to read Asset metadata '{}'",
-                            iterator->path().string());
-                    return std::nullopt;
+                    scan.issues.push_back({ relative, MetadataIssueKind::Unreadable,
+                        "the file could not be read" });
+                } else if (const auto entry = deserializeSourceMetadata(text); !entry) {
+                    scan.issues.push_back({ relative, MetadataIssueKind::Malformed,
+                        "the metadata failed to parse or validate" });
+                } else if (entry->source_path.lexically_normal() !=
+                           source_path.lexically_normal()) {
+                    scan.issues.push_back({ relative, MetadataIssueKind::Misplaced,
+                        "SourcePath is '" + entry->source_path.generic_string() +
+                                "' but the sidecar sits next to '" + source_path.generic_string() +
+                                "'" });
+                } else {
+                    scan.entries.push_back(*entry);
                 }
-                const auto entry = deserializeAssetMetadata(text);
-                if (!entry ||
-                        entry->source_path.lexically_normal() != source_path.lexically_normal()) {
-                    getLogChannel().error("Invalid or misplaced Asset metadata '{}'",
-                            iterator->path().string());
-                    return std::nullopt;
-                }
-                metadata.push_back(*entry);
             }
         }
         iterator.increment(error);
     }
     if (error) {
+        scan.traversal_error = error.message();
         getLogChannel().error("Failed while scanning the Assets root '{}': {}",
                 m_assets_root.string(), error.message());
-        return std::nullopt;
     }
-    return metadata;
+    for (const MetadataIssue& issue: scan.issues) {
+        getLogChannel().error("Rejected Asset metadata '{}': {}", issue.meta_file.generic_string(),
+                issue.detail);
+    }
+    return scan;
 }
 
-bool AssetStorage::writeMetadata(const AssetMetadata& metadata) {
+SourceScan AssetStorage::scanSources() const {
+    SourceScan scan;
+    if (!isOpen()) {
+        scan.traversal_error = "AssetStorage is not open";
+        return scan;
+    }
+
+    std::error_code error;
+    std::filesystem::recursive_directory_iterator iterator{ m_assets_root,
+        std::filesystem::directory_options::skip_permission_denied, error };
+    const std::filesystem::recursive_directory_iterator end;
+    while (!error && iterator != end) {
+        if (iterator->is_regular_file(error)) {
+            const std::filesystem::path relative =
+                    std::filesystem::relative(iterator->path(), m_assets_root, error);
+            if (!error && !relative.generic_string().ends_with(kAssetMetadataExtension)) {
+                SourceFile file;
+                file.relative_path = relative;
+
+                std::error_code stat_error;
+                const auto size = std::filesystem::file_size(iterator->path(), stat_error);
+                if (!stat_error) {
+                    file.size = size;
+                }
+                const auto written = std::filesystem::last_write_time(iterator->path(),
+                        stat_error);
+                if (!stat_error) {
+                    file.modified_time = std::chrono::duration_cast<std::chrono::seconds>(
+                            written.time_since_epoch())
+                                                 .count();
+                }
+                scan.files.push_back(std::move(file));
+            }
+        }
+        iterator.increment(error);
+    }
+    if (error) {
+        scan.traversal_error = error.message();
+    }
+    return scan;
+}
+
+std::filesystem::path AssetStorage::metadataPathFor(const std::filesystem::path& source_path) {
+    std::filesystem::path meta = source_path.lexically_normal();
+    meta += kAssetMetadataExtension;
+    return meta;
+}
+
+bool AssetStorage::writeMetadata(const SourceMetadata& metadata) {
     if (!isOpen()) {
         getLogChannel().warn("Cannot write Asset metadata: AssetStorage is not open");
         return false;
     }
 
-    auto meta_file = resolveSourcePath(metadata.source_path);
-    const auto text = serializeAssetMetadata(metadata);
+    const auto meta_file = resolveSourcePath(metadataPathFor(metadata.source_path));
+    const auto text = serializeSourceMetadata(metadata);
     if (!meta_file || !text) {
         getLogChannel().error("Failed to serialize Asset metadata for '{}'",
                 metadata.source_path.string());
         return false;
     }
-    *meta_file += kAssetMetadataExtension;
     if (!writeFile(*meta_file, *text)) {
         getLogChannel().error("Failed to write Asset metadata '{}'", meta_file->string());
         return false;
     }
     return true;
+}
+
+std::optional<SourceMetadata> AssetStorage::readMetadata(
+        const std::filesystem::path& source_path) const {
+    const auto meta_file = resolveSourcePath(metadataPathFor(source_path));
+    if (!meta_file) {
+        return std::nullopt;
+    }
+    std::string text;
+    if (!readFile(*meta_file, text)) {
+        return std::nullopt;
+    }
+    auto metadata = deserializeSourceMetadata(text);
+    if (!metadata || metadata->source_path.lexically_normal() != source_path.lexically_normal()) {
+        return std::nullopt;
+    }
+    return metadata;
+}
+
+bool AssetStorage::removeMetadata(const std::filesystem::path& source_path) {
+    if (!isOpen()) {
+        return false;
+    }
+    const auto meta_file = resolveSourcePath(metadataPathFor(source_path));
+    if (!meta_file) {
+        return false;
+    }
+    std::error_code error;
+    std::filesystem::remove(*meta_file, error);
+    if (error) {
+        getLogChannel().error("Failed to remove Asset metadata '{}': {}", meta_file->string(),
+                error.message());
+        return false;
+    }
+    return true;
+}
+
+bool AssetStorage::removeArtifact(const std::filesystem::path& relative_path) {
+    if (!isOpen()) {
+        return false;
+    }
+    const auto file = resolveArtifactPath(relative_path);
+    if (!file) {
+        return false;
+    }
+    std::error_code error;
+    std::filesystem::remove(*file, error);
+    if (error) {
+        getLogChannel().error("Failed to remove Artifact '{}': {}", file->string(),
+                error.message());
+        return false;
+    }
+    return true;
+}
+
+bool AssetStorage::hasSource(const std::filesystem::path& relative_path) const {
+    const auto file = resolveSourcePath(relative_path);
+    if (!file) {
+        return false;
+    }
+    std::error_code error;
+    return std::filesystem::is_regular_file(*file, error) && !error;
+}
+
+bool AssetStorage::hasArtifact(const std::filesystem::path& relative_path) const {
+    const auto file = resolveArtifactPath(relative_path);
+    if (!file) {
+        return false;
+    }
+    std::error_code error;
+    return std::filesystem::is_regular_file(*file, error) && !error;
+}
+
+std::optional<uint64_t> AssetStorage::sourceSize(const std::filesystem::path& relative_path) const {
+    const auto file = resolveSourcePath(relative_path);
+    if (!file) {
+        return std::nullopt;
+    }
+    std::error_code error;
+    const auto size = std::filesystem::file_size(*file, error);
+    if (error) {
+        return std::nullopt;
+    }
+    return size;
 }
 
 bool AssetStorage::writeArtifact(const std::filesystem::path& relative_path,
@@ -189,6 +328,23 @@ std::optional<std::filesystem::path> AssetStorage::resolveSourcePath(
         return std::nullopt;
     }
     return (m_assets_root / relative_path.lexically_normal()).lexically_normal();
+}
+
+std::optional<std::filesystem::path> AssetStorage::relativeSourcePath(
+        const std::filesystem::path& absolute_path) const {
+    if (!isOpen()) {
+        return std::nullopt;
+    }
+    std::error_code error;
+    const auto normalized = std::filesystem::absolute(absolute_path, error).lexically_normal();
+    if (error) {
+        return std::nullopt;
+    }
+    const auto relative = std::filesystem::relative(normalized, m_assets_root, error);
+    if (error || relative.empty() || !isSafeAssetRelativePath(relative)) {
+        return std::nullopt;
+    }
+    return relative;
 }
 
 std::optional<std::filesystem::path> AssetStorage::resolveArtifactPath(
