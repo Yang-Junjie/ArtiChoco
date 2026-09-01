@@ -75,6 +75,30 @@ bool AssetStorage::open(std::filesystem::path assets_root,
     return true;
 }
 
+bool AssetStorage::openArtifactsOnly(std::filesystem::path artifacts_root) {
+    close();
+    if (artifacts_root.empty()) {
+        getLogChannel().error("Failed to open AssetStorage: the Artifacts root path is empty");
+        return false;
+    }
+
+    std::error_code error;
+    artifacts_root = std::filesystem::absolute(artifacts_root, error).lexically_normal();
+    if (error) {
+        getLogChannel().error("Failed to resolve the Artifacts root: {}", error.message());
+        return false;
+    }
+    if (!std::filesystem::is_directory(artifacts_root, error) || error) {
+        getLogChannel().error("The Artifacts root '{}' does not exist", artifacts_root.string());
+        return false;
+    }
+
+    m_artifacts_root = std::move(artifacts_root);
+    getLogChannel().info("Opened AssetStorage in packaged mode (artifacts '{}')",
+            m_artifacts_root.string());
+    return true;
+}
+
 void AssetStorage::close() noexcept {
     m_assets_root.clear();
     m_artifacts_root.clear();
@@ -82,9 +106,9 @@ void AssetStorage::close() noexcept {
 
 MetadataScan AssetStorage::scanMetadata() const {
     MetadataScan scan;
-    if (!isOpen()) {
-        scan.traversal_error = "AssetStorage is not open";
-        getLogChannel().warn("Cannot scan Asset metadata: AssetStorage is not open");
+    if (!hasSources()) {
+        scan.traversal_error = "AssetStorage has no source tree";
+        getLogChannel().warn("Cannot scan Asset metadata: AssetStorage has no source tree");
         return scan;
     }
 
@@ -135,8 +159,8 @@ MetadataScan AssetStorage::scanMetadata() const {
 
 SourceScan AssetStorage::scanSources() const {
     SourceScan scan;
-    if (!isOpen()) {
-        scan.traversal_error = "AssetStorage is not open";
+    if (!hasSources()) {
+        scan.traversal_error = "AssetStorage has no source tree";
         return scan;
     }
 
@@ -324,7 +348,9 @@ bool AssetStorage::writeArtifact(const std::filesystem::path& relative_path,
 
 std::optional<std::filesystem::path> AssetStorage::resolveSourcePath(
         const std::filesystem::path& relative_path) const {
-    if (!isOpen() || !isSafeAssetRelativePath(relative_path)) {
+    // writeMetadata / readMetadata / removeMetadata / hasSource / sourceSize 全都从这里取路径，
+    // 所以打包模式下只要在这一处失败，整条源文件侧的 API 就自动都失效了。
+    if (!hasSources() || !isSafeAssetRelativePath(relative_path)) {
         return std::nullopt;
     }
     return (m_assets_root / relative_path.lexically_normal()).lexically_normal();
@@ -332,7 +358,7 @@ std::optional<std::filesystem::path> AssetStorage::resolveSourcePath(
 
 std::optional<std::filesystem::path> AssetStorage::relativeSourcePath(
         const std::filesystem::path& absolute_path) const {
-    if (!isOpen()) {
+    if (!hasSources()) {
         return std::nullopt;
     }
     std::error_code error;

@@ -2,6 +2,7 @@
 
 #include "asset_catalog.h"
 #include "asset_importer.h"
+#include "asset_manifest.h"
 #include "asset_loader.h"
 #include "asset_reconcile.h"
 #include "asset_storage.h"
@@ -19,7 +20,25 @@ namespace arti::asset {
 class AssetManager {
 public:
     bool open(std::filesystem::path assets_root, std::filesystem::path artifacts_root);
+
+    // 打包模式：catalog 从 manifest 建，artifact 只读，Assets/ 完全不参与。
+    //
+    // 开发期 open() 靠扫 Assets/ 下的 .meta 建 catalog，扫不全就宁可打不开工作区 ——
+    // 那个策略对编辑器是对的（漏看一个 .meta 会让 reconcile 删掉不该删的东西），对发布出去的
+    // 游戏是错的：那边根本没有 .meta。所以打包模式是另一条 open。
+    //
+    // 这个模式下 import / planReconcile / applyReconcile 一律拒绝：没有源文件可导。
+    // checkIntegrity() 仍然可用，而且正是校验一份安装是否完整的手段。
+    bool openPackaged(std::filesystem::path artifacts_root,
+            const std::filesystem::path& manifest_file);
+
     void close() noexcept;
+
+    bool isPackaged() const noexcept { return m_storage.isOpen() && !m_storage.hasSources(); }
+
+    // 把 catalog 里的 User 条目拍成 manifest，供打包写盘。按 handle 排序，所以同一个项目
+    // 连续打两次包产出的字节是一样的 —— catalog 本身是 unordered_map，不排就每次都不同。
+    AssetManifest buildManifest() const;
 
     bool registerImporter(std::unique_ptr<AssetImporter> importer);
     bool registerLoader(std::unique_ptr<AssetLoader> loader);

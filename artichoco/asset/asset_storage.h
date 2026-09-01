@@ -50,9 +50,21 @@ struct SourceScan final {
 class AssetStorage {
 public:
     bool open(std::filesystem::path assets_root, std::filesystem::path artifacts_root);
+
+    // 打包模式：只挂上 artifacts_root，没有源文件树。发布出去的游戏里没有 Assets/ ——
+    // 那边的 catalog 来自 manifest，artifact 是唯一还要从磁盘读的东西。
+    //
+    // 和 open() 的另一个区别是不 create_directories：装好的游戏里 Library/ 必须已经在，
+    // 缺了就是安装坏了，替它建一个空目录只会把「资产全丢了」推迟到第一次 load 才报。
+    bool openArtifactsOnly(std::filesystem::path artifacts_root);
+
     void close() noexcept;
 
-    bool isOpen() const noexcept { return !m_assets_root.empty(); }
+    bool isOpen() const noexcept { return !m_artifacts_root.empty(); }
+
+    // 有没有源文件树。打包模式下是 false，此时所有 source / metadata 相关的操作都会失败 ——
+    // 它们没有可操作的对象，不是「暂时失败」而是「这个模式下不存在」。
+    bool hasSources() const noexcept { return !m_assets_root.empty(); }
 
     // 递归扫描 assets_root 下所有 .meta。
     MetadataScan scanMetadata() const;

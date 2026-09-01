@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <ranges>
 #include <system_error>
 #include <tuple>
@@ -12,6 +14,15 @@
 
 namespace arti::asset {
 namespace {
+
+bool readTextFile(const std::filesystem::path& file, std::string& contents) {
+    std::ifstream input{ file, std::ios::binary };
+    if (!input.is_open()) {
+        return false;
+    }
+    contents.assign(std::istreambuf_iterator<char>{ input }, std::istreambuf_iterator<char>{});
+    return input.good() || input.eof();
+}
 
 std::string normalizeExtension(std::string_view extension) {
     if (extension.empty()) {
@@ -74,6 +85,50 @@ bool AssetManager::open(std::filesystem::path assets_root, std::filesystem::path
                 scan.issues.size(), conflicts);
     }
     return true;
+}
+
+bool AssetManager::openPackaged(std::filesystem::path artifacts_root,
+        const std::filesystem::path& manifest_file) {
+    close();
+    if (!m_storage.openArtifactsOnly(std::move(artifacts_root))) {
+        return false;
+    }
+
+    std::string text;
+    if (!readTextFile(manifest_file, text)) {
+        getLogChannel().error("Failed to read the Asset manifest '{}'", manifest_file.string());
+        m_storage.close();
+        return false;
+    }
+    const auto manifest = deserializeAssetManifest(text);
+    if (!manifest) {
+        // deserializeAssetManifest 已经记了具体原因。坏 manifest 就该让游戏起不来 ——
+        // 少几个资产悄悄接着跑，表现是「东西凭空消失」，比启动失败难查得多。
+        m_storage.close();
+        return false;
+    }
+
+    for (const AssetMetadata& entry: manifest->assets) {
+        // manifest 那边已经拒过重复 handle，而 Engine 条目此刻还没登记，所以这里不会冲突。
+        m_catalog.insert(entry, AssetOrigin::User);
+    }
+    getLogChannel().info("Opened AssetManager from the manifest '{}' with {} Asset(s)",
+            manifest_file.string(), m_catalog.importedCount());
+    return true;
+}
+
+AssetManifest AssetManager::buildManifest() const {
+    AssetManifest manifest;
+    const std::vector<AssetEntry> entries = m_catalog.entriesWithOrigin(AssetOrigin::User);
+    manifest.assets.reserve(entries.size());
+    for (const AssetEntry& entry: entries) {
+        manifest.assets.push_back(entry.metadata);
+    }
+    std::ranges::sort(manifest.assets,
+            [](const AssetMetadata& left, const AssetMetadata& right) {
+                return left.handle.value() < right.handle.value();
+            });
+    return manifest;
 }
 
 // 注意：importer 与 loader 的注册**不**在这里清理。它们不绑定工作区
@@ -190,6 +245,11 @@ AssetImportResult AssetManager::import(const std::filesystem::path& source_path,
     AssetImportResult result;
     if (!m_storage.isOpen()) {
         result.error = "the Asset workspace is not open";
+        getLogChannel().error("Cannot import '{}': {}", source_path.string(), result.error);
+        return result;
+    }
+    if (!m_storage.hasSources()) {
+        result.error = "the Asset workspace is packaged and has no source tree";
         getLogChannel().error("Cannot import '{}': {}", source_path.string(), result.error);
         return result;
     }
@@ -333,6 +393,10 @@ ReconcilePlan AssetManager::planReconcile() const {
     ReconcilePlan plan;
     if (!m_storage.isOpen()) {
         plan.traversal_error = "the Asset workspace is not open";
+        return plan;
+    }
+    if (!m_storage.hasSources()) {
+        plan.traversal_error = "the Asset workspace is packaged and has no source tree";
         return plan;
     }
 
@@ -633,6 +697,10 @@ ReconcileReport AssetManager::applyReconcile(const ReconcilePlan& plan) {
     ReconcileReport report;
     if (!m_storage.isOpen()) {
         report.errors.emplace_back("the Asset workspace is not open");
+        return report;
+    }
+    if (!m_storage.hasSources()) {
+        report.errors.emplace_back("the Asset workspace is packaged and has no source tree");
         return report;
     }
     if (!plan.complete()) {

@@ -1,5 +1,7 @@
 #include "asset_metadata.h"
 
+#include "detail/metadata_yaml.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -8,65 +10,12 @@
 #include <yaml-cpp/yaml.h>
 
 namespace arti::asset {
-namespace {
 
-constexpr std::string_view bool_tag = "!arti/bool";
-constexpr std::string_view int_tag = "!arti/int";
-constexpr std::string_view uint_tag = "!arti/uint";
-constexpr std::string_view double_tag = "!arti/double";
-constexpr std::string_view string_tag = "!arti/string";
-
-YAML::Node serializeValue(const Value& value) {
-    YAML::Node node;
-    if (const auto* v = std::get_if<bool>(&value)) {
-        node = *v;
-        node.SetTag(std::string{ bool_tag });
-    } else if (const auto* v = std::get_if<int64_t>(&value)) {
-        node = *v;
-        node.SetTag(std::string{ int_tag });
-    } else if (const auto* v = std::get_if<uint64_t>(&value)) {
-        node = *v;
-        node.SetTag(std::string{ uint_tag });
-    } else if (const auto* v = std::get_if<double>(&value)) {
-        node = *v;
-        node.SetTag(std::string{ double_tag });
-    } else if (const auto* v = std::get_if<std::string>(&value)) {
-        node = *v;
-        node.SetTag(std::string{ string_tag });
-    } else if (const auto* v = std::get_if<std::vector<uint64_t>>(&value)) {
-        node = YAML::Node{ YAML::NodeType::Sequence };
-        for (uint64_t element : *v) {
-            YAML::Node element_node{ element };
-            element_node.SetTag(std::string{ uint_tag });
-            node.push_back(element_node);
-        }
-    }
-    return node;
-}
-
-std::optional<Value> deserializeValue(const YAML::Node& node) {
-    if (const std::string tag = node.Tag(); tag == bool_tag) {
-        return Value{ node.as<bool>() };
-    } else if (tag == int_tag) {
-        return Value{ node.as<int64_t>() };
-    } else if (tag == uint_tag) {
-        return Value{ node.as<uint64_t>() };
-    } else if (tag == double_tag) {
-        return Value{ node.as<double>() };
-    } else if (tag == string_tag) {
-        return Value{ node.as<std::string>() };
-    }
-    if (node.IsSequence()) {
-        std::vector<uint64_t> elements;
-        for (const YAML::Node& element : node) {
-            elements.push_back(element.as<uint64_t>());
-        }
-        return Value{ std::move(elements) };
-    }
-    return std::nullopt;
-}
-
-}
+using detail::readDependencies;
+using detail::readProperties;
+using detail::serializeDependencies;
+using detail::serializeProperties;
+using detail::serializeValue;
 
 bool isSafeAssetRelativePath(const std::filesystem::path& path, bool allow_empty) {
     if (path.empty()) {
@@ -243,18 +192,8 @@ std::optional<std::string> serializeSourceMetadata(const SourceMetadata& metadat
             node["Type"] = record.type;
             node["ArtifactPath"] = record.artifact_path.lexically_normal().generic_string();
 
-            YAML::Node properties{ YAML::NodeType::Map };
-            for (const auto& [key, value] : record.properties) {
-                properties[key] = serializeValue(value);
-            }
-            node["Properties"] = properties;
-
-            YAML::Node dependencies{ YAML::NodeType::Sequence };
-            for (core::UUID dependency : record.dependencies) {
-                dependencies.push_back(dependency.toString());
-            }
-            dependencies.SetStyle(YAML::EmitterStyle::Flow);
-            node["Dependencies"] = dependencies;
+            node["Properties"] = serializeProperties(record.properties);
+            node["Dependencies"] = serializeDependencies(record.dependencies);
             assets.push_back(node);
         }
 
@@ -274,44 +213,6 @@ std::optional<std::string> serializeSourceMetadata(const SourceMetadata& metadat
     } catch (...) {
         return std::nullopt;
     }
-}
-
-namespace {
-
-bool readPropertyMap(const YAML::Node& node, std::unordered_map<std::string, Value>& out) {
-    if (!node) {
-        return true;
-    }
-    if (!node.IsMap()) {
-        return false;
-    }
-    for (const auto& entry : node) {
-        auto value = deserializeValue(entry.second);
-        if (!value) {
-            return false;
-        }
-        out.emplace(entry.first.as<std::string>(), std::move(*value));
-    }
-    return true;
-}
-
-bool readDependencies(const YAML::Node& node, std::vector<core::UUID>& out) {
-    if (!node) {
-        return true;
-    }
-    if (!node.IsSequence()) {
-        return false;
-    }
-    for (const YAML::Node& entry : node) {
-        const auto handle = core::UUID::fromString(entry.as<std::string>());
-        if (!handle) {
-            return false;
-        }
-        out.push_back(*handle);
-    }
-    return true;
-}
-
 }
 
 std::optional<SourceMetadata> deserializeSourceMetadata(std::string_view text) {
@@ -342,7 +243,7 @@ std::optional<SourceMetadata> deserializeSourceMetadata(std::string_view text) {
         }
 
         if (const YAML::Node settings = root["Settings"]; settings && settings.IsMap()) {
-            if (!readPropertyMap(settings["Authored"], metadata.settings.authored)) {
+            if (!readProperties(settings["Authored"], metadata.settings.authored)) {
                 return std::nullopt;
             }
             if (const auto hash = settings["ResolvedHash"]) {
@@ -357,7 +258,7 @@ std::optional<SourceMetadata> deserializeSourceMetadata(std::string_view text) {
                     if (!node.IsMap() || !node["Value"]) {
                         return std::nullopt;
                     }
-                    auto value = deserializeValue(node["Value"]);
+                    auto value = detail::deserializeValue(node["Value"]);
                     if (!value) {
                         return std::nullopt;
                     }
@@ -396,7 +297,7 @@ std::optional<SourceMetadata> deserializeSourceMetadata(std::string_view text) {
                 if (const auto local_id = node["LocalId"]) {
                     record.local_id = local_id.as<std::string>();
                 }
-                if (!readPropertyMap(node["Properties"], record.properties) ||
+                if (!readProperties(node["Properties"], record.properties) ||
                         !readDependencies(node["Dependencies"], record.dependencies)) {
                     return std::nullopt;
                 }
