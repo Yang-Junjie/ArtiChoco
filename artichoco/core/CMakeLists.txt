@@ -2,6 +2,7 @@ add_library(artichoco_core STATIC
     application.cpp
     entry_point.cpp
     io/input.cpp
+    io/paths.cpp
     layer_stack.cpp
     log.cpp
     task/task_system.cpp

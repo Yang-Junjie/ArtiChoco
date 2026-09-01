@@ -153,14 +153,10 @@ if(WIN32)
         MAP_IMPORTED_CONFIG_RELWITHDEBINFO RELEASE
     )
 
-    find_library(_arti_slang_library_debug
-        NAMES slangd slang
-        HINTS ${_arti_vulkan_sdk_prefixes}
-        PATH_SUFFIXES Lib lib
-        NO_DEFAULT_PATH
-        NO_CACHE
-        REQUIRED
-    )
+    # Slang 上游只发一份 DLL，没有 debug / release 之分。SDK 的 Lib 下确实有 slangd.lib，
+    # 但那是 language server（slangd.exe 的伴生件）的导入库，**内嵌的 DLL 名同样是 slang.dll**。
+    # 以前这里 debug 配置链 slangd.lib、却把 slangd.dll 当运行时依赖，两边对不上：staging
+    # 拷过去的文件 exe 根本不加载，真正需要的 slang.dll 一个都不拷。所以两个配置统一。
     find_file(_arti_slang_runtime_release
         NAMES slang.dll
         HINTS ${_arti_vulkan_sdk_prefixes}
@@ -169,22 +165,32 @@ if(WIN32)
         NO_CACHE
         REQUIRED
     )
-    find_file(_arti_slang_runtime_debug
-        NAMES slangd.dll slang.dll
+
+    # slang.dll 只有几十 KB，是个转发器 —— 实现在 slang-compiler.dll（20 MB 量级）里，由它在
+    # 运行时 LoadLibrary 加载。CMake 的 $<TARGET_RUNTIME_DLLS> 只跟 target 依赖图，看不见
+    # 动态加载，所以 artichoco_stage_vulkan_sdk_runtime() 里必须显式拷这一个。
+    #
+    # 只有它。slang-glslang / slang-rt / slang-glsl-module 实测都不需要（走 SPIR-V 直出，
+    # 不过 glslang），三个加起来 30 MB+，别顺手都拷进去。
+    find_file(_arti_slang_compiler_runtime
+        NAMES slang-compiler.dll
         HINTS ${_arti_vulkan_sdk_prefixes}
         PATH_SUFFIXES Bin bin
         NO_DEFAULT_PATH
         NO_CACHE
         REQUIRED
     )
+    # CACHE INTERNAL：staging 函数在**调用点**展开，而调用点在别的目录作用域里。
+    set(ARTICHOCO_SLANG_COMPILER_RUNTIME "${_arti_slang_compiler_runtime}" CACHE INTERNAL
+        "slang-compiler.dll, loaded dynamically by slang.dll")
 
     add_library(arti_sdk_slang SHARED IMPORTED GLOBAL)
     set_target_properties(arti_sdk_slang PROPERTIES
         IMPORTED_CONFIGURATIONS "DEBUG;RELEASE"
         IMPORTED_IMPLIB "${_arti_slang_library_release}"
         IMPORTED_LOCATION "${_arti_slang_runtime_release}"
-        IMPORTED_IMPLIB_DEBUG "${_arti_slang_library_debug}"
-        IMPORTED_LOCATION_DEBUG "${_arti_slang_runtime_debug}"
+        IMPORTED_IMPLIB_DEBUG "${_arti_slang_library_release}"
+        IMPORTED_LOCATION_DEBUG "${_arti_slang_runtime_release}"
         IMPORTED_IMPLIB_RELEASE "${_arti_slang_library_release}"
         IMPORTED_LOCATION_RELEASE "${_arti_slang_runtime_release}"
         MAP_IMPORTED_CONFIG_MINSIZEREL RELEASE
@@ -231,6 +237,20 @@ function(artichoco_stage_vulkan_sdk_runtime target)
             COMMAND_EXPAND_LISTS
             VERBATIM
         )
+        # slang.dll 在运行时 LoadLibrary 出 slang-compiler.dll，$<TARGET_RUNTIME_DLLS> 看不见
+        # 这条依赖，所以手写一条。缺了它进程连加载都过不去（0xC0000135），而报错里不会提到
+        # 是谁缺的 —— 这一条不能省。
+        #
+        # 只有链了 slang 的 target 才需要，但多拷一个文件的代价远小于「哪个 target 链了 slang」
+        # 这个判断在依赖图变化时失效的代价。
+        if(ARTICHOCO_SLANG_COMPILER_RUNTIME)
+            add_custom_command(TARGET "${target}" POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${ARTICHOCO_SLANG_COMPILER_RUNTIME}"
+                    "$<TARGET_FILE_DIR:${target}>"
+                VERBATIM
+            )
+        endif()
     else()
         get_filename_component(_arti_sdk_runtime_dir "${_arti_sdl3_library_release}" DIRECTORY)
         set_property(TARGET "${target}" APPEND PROPERTY BUILD_RPATH "${_arti_sdk_runtime_dir}")
