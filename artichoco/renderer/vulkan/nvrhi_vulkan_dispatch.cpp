@@ -9,7 +9,8 @@ namespace arti::renderer::vulkan::detail {
 
 void initializeNvrhiVulkanDispatcher(VkInstance instance, VkDevice device)
 {
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(instance, vkGetInstanceProcAddr, device);
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(
+            instance, vkGetInstanceProcAddr, device, vkGetDeviceProcAddr);
 }
 
 } // namespace arti::renderer::vulkan::detail
