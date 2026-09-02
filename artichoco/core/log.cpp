@@ -4,6 +4,7 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <stdexcept>
+#include <system_error>
 #include <unordered_map>
 #include <vector>
 
@@ -34,40 +35,72 @@ std::vector<spdlog::sink_ptr>& activeSinks()
 
 void Logger::init(const std::string& log_file, Level level)
 {
-    static_cast<void>(core());
+    // 文件 sink 建不起来时的原因，留到出锁之后再打 —— 打日志本身要走 channel，在这里打不安全。
+    std::string file_sink_error;
 
-    std::scoped_lock state_lock(m_s_mutex);
-    std::scoped_lock registry_lock(channelRegistryMutex());
+    {
+        static_cast<void>(core());
 
-    m_s_initialized.store(false, std::memory_order_release);
-    m_s_level.store(level, std::memory_order_release);
+        std::scoped_lock state_lock(m_s_mutex);
+        std::scoped_lock registry_lock(channelRegistryMutex());
 
-    auto& sinks = activeSinks();
-    sinks.clear();
+        m_s_initialized.store(false, std::memory_order_release);
+        m_s_level.store(level, std::memory_order_release);
 
-    auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-    console_sink->set_level(spdlog::level::trace);
-    console_sink->set_pattern("%^[%n] [%l] %v%$");
-    sinks.push_back(std::move(console_sink));
+        auto& sinks = activeSinks();
+        sinks.clear();
 
-    if (!log_file.empty()) {
-        const std::filesystem::path log_path{log_file};
-        if (log_path.has_parent_path()) {
-            std::filesystem::create_directories(log_path.parent_path());
+        auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+        console_sink->set_level(spdlog::level::trace);
+        console_sink->set_pattern("%^[%n] [%l] %v%$");
+        sinks.push_back(std::move(console_sink));
+
+        // 文件 sink 是**可选**的：建不起来就只留控制台，不让整个进程起不来。
+        //
+        // 之前这里的失败会一路抛到 main 的 catch，进程以 EXIT_FAILURE 退出。后果是产物解压到
+        // 只读位置（`C:\Program Files\...` 之类）时**根本启动不了**，而报错只有一句
+        // "Unhandled exception"，看不出是日志的事 —— 一个诊断设施把它要诊断的程序搞挂了。
+        //
+        // 日志路径本身没有改：仍然是 exe 旁边的 logs/。真要让只读安装也留下日志，得改成写
+        // %LOCALAPPDATA%，那是另一个决定（会挪走开发期习惯的位置），不在这里顺手做。
+        if (!log_file.empty()) {
+            try {
+                const std::filesystem::path log_path{log_file};
+                if (log_path.has_parent_path()) {
+                    // error_code 重载：目录建不出来是常态失败，不该靠异常表达。
+                    std::error_code error;
+                    std::filesystem::create_directories(log_path.parent_path(), error);
+                    if (error) {
+                        throw std::runtime_error("cannot create '" +
+                                log_path.parent_path().string() + "': " + error.message());
+                    }
+                }
+
+                auto file_sink =
+                        std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path.string(), true);
+                file_sink->set_level(spdlog::level::trace);
+                file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v");
+                sinks.push_back(std::move(file_sink));
+            } catch (const std::exception& exception) {
+                file_sink_error = exception.what();
+            } catch (...) {
+                file_sink_error = "unknown error";
+            }
         }
 
-        auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path.string(), true);
-        file_sink->set_level(spdlog::level::trace);
-        file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v");
-        sinks.push_back(std::move(file_sink));
+        for (const auto& [name, channel] : channelRegistry()) {
+            static_cast<void>(name);
+            configureChannel(*channel);
+        }
+
+        m_s_initialized.store(true, std::memory_order_release);
     }
 
-    for (const auto& [name, channel] : channelRegistry()) {
-        static_cast<void>(name);
-        configureChannel(*channel);
+    // 出锁之后再打。控制台 sink 一定在，所以这条一定看得见。
+    if (!file_sink_error.empty()) {
+        ARTI_CORE_WARN("Log file '{}' is unavailable ({}); logging to the console only.", log_file,
+                file_sink_error);
     }
-
-    m_s_initialized.store(true, std::memory_order_release);
 }
 
 void Logger::shutdown()
