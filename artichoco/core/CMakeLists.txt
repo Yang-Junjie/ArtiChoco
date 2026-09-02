@@ -5,6 +5,7 @@ add_library(artichoco_core STATIC
     io/paths.cpp
     layer_stack.cpp
     log.cpp
+    task/task_pool.cpp
     task/task_system.cpp
     task/thread_naming.cpp
     uuid.cpp

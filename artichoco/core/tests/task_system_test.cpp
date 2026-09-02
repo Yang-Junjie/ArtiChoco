@@ -8,6 +8,7 @@
 #include "log.h"
 #include "task/task_system.h"
 
+#include <atomic>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -25,6 +26,7 @@
 
 namespace {
 
+using arti::core::TaskHandle;
 using arti::core::TaskSystem;
 using arti::core::TaskSystemConfig;
 
@@ -160,6 +162,103 @@ int testThreadNaming() {
     return 0;
 }
 
+// 旧的 submit() 是**设计上的泄漏**：每次往一个 vector 塞一个任务对象，只有 waitForAll() 会清。
+// 这条断言就是那个泄漏的回归 —— 提交十万次并逐个等，槽位数必须有上界而不是跟着次数长。
+int testSlotReuse() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 4 });
+    auto& tasks = TaskSystem::get();
+
+    constexpr uint32_t kIterations = 100'000;
+    std::atomic<uint32_t> counter{ 0 };
+    for (uint32_t index = 0; index < kIterations; ++index) {
+        const TaskHandle handle =
+                tasks.submit([&counter] { counter.fetch_add(1, std::memory_order_relaxed); });
+        tasks.wait(handle);
+    }
+
+    const uint32_t ran = counter.load(std::memory_order_relaxed);
+    const std::size_t slots = tasks.taskSlotCount();
+    TaskSystem::shutdown();
+
+    if (!require(ran == kIterations,
+                "十万个 submit 应该都跑到，实际 " + std::to_string(ran))) {
+        return 1;
+    }
+    // 上界给得很松：真正要抓的是「跟着迭代次数线性增长」。逐个等的话在途永远只有一个，
+    // 所以实际应该就是 1。
+    if (!require(slots <= 64, "槽位数该有上界，实际 " + std::to_string(slots))) {
+        return 1;
+    }
+
+    return 0;
+}
+
+// 陈旧句柄：槽位被回收再利用之后，老句柄上 wait / isComplete 都不该崩、不该阻塞。
+int testStaleHandle() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 2 });
+    auto& tasks = TaskSystem::get();
+
+    std::atomic<uint32_t> counter{ 0 };
+    const TaskHandle first = tasks.submit([&counter] { counter.fetch_add(1); });
+    tasks.wait(first);
+
+    int failures = 0;
+    if (!require(tasks.isComplete(first), "等过之后 isComplete 应该为真")) {
+        ++failures;
+    }
+
+    // 再 submit 一个：空闲表空了 → 扫描 → first 的槽位被回收、世代号 +1 → 立刻被复用。
+    const TaskHandle second = tasks.submit([&counter] { counter.fetch_add(1); });
+    tasks.wait(second);
+
+    // 这两条不是实现细节洁癖：不成立的话下面那半个测试就是**空转**（first 还没变成陈旧句柄）。
+    if (!require(second.index == first.index && second.generation == first.generation + 1,
+                "第二个任务应该复用同一个槽位并让世代号 +1")) {
+        ++failures;
+    }
+
+    tasks.wait(first);
+    if (!require(tasks.isComplete(first), "陈旧句柄应该报「已完成」")) {
+        ++failures;
+    }
+
+    TaskSystem::shutdown();
+    return failures == 0 ? 0 : 1;
+}
+
+// waitForAll 是屏障：submit 一批都不等，直接 waitForAll，之后每个句柄都该报完成。
+int testWaitForAll() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 4 });
+    auto& tasks = TaskSystem::get();
+
+    constexpr uint32_t kCount = 256;
+    std::atomic<uint32_t> counter{ 0 };
+    std::vector<TaskHandle> handles;
+    handles.reserve(kCount);
+    for (uint32_t index = 0; index < kCount; ++index) {
+        handles.push_back(
+                tasks.submit([&counter] { counter.fetch_add(1, std::memory_order_relaxed); }));
+    }
+
+    tasks.waitForAll();
+
+    int failures = 0;
+    const uint32_t ran = counter.load(std::memory_order_relaxed);
+    if (!require(ran == kCount, "waitForAll 之后所有任务都该跑完，实际 " + std::to_string(ran))) {
+        ++failures;
+    }
+    for (const TaskHandle handle: handles) {
+        if (!tasks.isComplete(handle)) {
+            ++failures;
+            static_cast<void>(require(false, "waitForAll 之后还有句柄报未完成"));
+            break;
+        }
+    }
+
+    TaskSystem::shutdown();
+    return failures == 0 ? 0 : 1;
+}
+
 int run() {
     if (testGetBeforeInit() != 0) {
         return 1;
@@ -171,6 +270,15 @@ int run() {
         return 1;
     }
     if (testThreadNaming() != 0) {
+        return 1;
+    }
+    if (testSlotReuse() != 0) {
+        return 1;
+    }
+    if (testStaleHandle() != 0) {
+        return 1;
+    }
+    if (testWaitForAll() != 0) {
         return 1;
     }
 

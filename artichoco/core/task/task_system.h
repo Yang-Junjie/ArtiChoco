@@ -1,19 +1,21 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include <functional>
 #include <memory>
-#include <mutex>
-#include <vector>
 
 namespace enki {
 class TaskScheduler;
-class TaskSet;
 class LambdaPinnedTask;
 } // namespace enki
 
 namespace arti::core {
+
+namespace detail {
+class TaskPool;
+} // namespace detail
 
 // 进程级配置，只在 init() 时读一次。刻意不做惰性初始化：线程数这类东西是**进程启动时**的
 // 决定，惰性建意味着谁先碰它谁定配置。
@@ -29,6 +31,21 @@ struct TaskSystemConfig {
     // 给 worker 起名 ArtiChoco-Worker-<n>。调试器的线程窗口和 profiler 靠它认人 ——
     // 这是「活到底有没有真的分出去」最便宜的观测手段。
     bool name_threads{true};
+};
+
+// 异步任务的句柄：槽位下标 + 世代号。槽位被回收再利用时世代号 +1，所以**陈旧句柄是安全的**
+// —— 世代号不匹配就当「那个任务早完事了」，wait() 是空操作、isComplete() 返回 true。
+// 32 位世代号，回绕不现实。
+struct TaskHandle {
+    static constexpr uint32_t kInvalidIndex{0xFFFF'FFFFu};
+
+    uint32_t index{kInvalidIndex};
+    uint32_t generation{0};
+
+    bool valid() const noexcept
+    {
+        return index != kInvalidIndex;
+    }
 };
 
 // enkiTS 的封装。**进程级**单例，生命周期由 init() / shutdown() 显式管，和 Logger 一样 ——
@@ -47,16 +64,18 @@ public:
     // 未 init 时抛 std::logic_error —— 比让调用方拿一个空引用再解引用更早也更明确。
     static TaskSystem& get();
 
+    // 阻塞的 fork-join。任务对象在栈上、生命周期由这个函数框住，所以不进池。
     template <typename Fn>
     void parallelFor(uint32_t count, Fn&& function)
     {
         parallelForImpl(count, [fn = std::forward<Fn>(function)](uint32_t index) mutable { fn(index); });
     }
 
+    // 异步。返回的句柄可以 wait() / isComplete()，也可以直接丢掉（任务照跑，完成后自动回收）。
     template <typename Fn>
-    void submit(Fn&& function)
+    TaskHandle submit(Fn&& function)
     {
-        submitImpl([fn = std::forward<Fn>(function)]() mutable { fn(); });
+        return submitImpl([fn = std::forward<Fn>(function)]() mutable { fn(); });
     }
 
     template <typename Fn>
@@ -68,22 +87,31 @@ public:
     void launchPinned(uint32_t thread_index, const std::function<void()>& function);
     void waitForPinnedTask();
 
+    // 陈旧句柄安全：指向已回收槽位的句柄当「早完事了」处理，不崩、不阻塞。
+    void wait(TaskHandle handle);
+    bool isComplete(TaskHandle handle) const;
+
+    // **屏障 / 关停用，不是通用同步手段。** enkiTS 自己的注释就写着：在任务被持续加入的情况下
+    // 它不保证有效。要等「我关心的那批活」，用句柄。
+    void waitForAll();
+
     // 注意：含调用线程。等于 worker_count + external_thread_count + 1。
     uint32_t taskThreadCount() const noexcept;
 
-    void waitForAll();
+    // 诊断用：池子里一共开了多少槽位。测试靠它证明回收真的在工作（submit 十万次之后这个数
+    // 应该有上界，而不是跟着次数长）。
+    std::size_t taskSlotCount() const;
 
 private:
     explicit TaskSystem(const TaskSystemConfig& config);
     ~TaskSystem();
 
     void parallelForImpl(uint32_t count, const std::function<void(uint32_t)>& function);
-    void submitImpl(const std::function<void()>& function);
+    TaskHandle submitImpl(std::function<void()> function);
     void pinnedImpl(uint32_t thread_index, const std::function<void()>& function);
 
     std::unique_ptr<enki::TaskScheduler> m_scheduler;
-    std::mutex m_pending_mutex;
-    std::vector<std::unique_ptr<enki::TaskSet>> m_pending;
+    std::unique_ptr<detail::TaskPool> m_pool;
     std::unique_ptr<enki::LambdaPinnedTask> m_pinned_task;
 };
 

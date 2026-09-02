@@ -1,6 +1,7 @@
 #include "task_system.h"
 
 #include "log.h"
+#include "task_pool.h"
 #include "thread_naming.h"
 
 #include "TaskScheduler.h"
@@ -68,6 +69,7 @@ TaskSystem& TaskSystem::get()
 
 TaskSystem::TaskSystem(const TaskSystemConfig& config)
     : m_scheduler(std::make_unique<enki::TaskScheduler>())
+    , m_pool(std::make_unique<detail::TaskPool>())
 {
     // 线程一开起来就会调 onTaskThreadStart，所以这个开关必须在 Initialize 之前落地。
     s_name_threads = config.name_threads;
@@ -104,16 +106,19 @@ void TaskSystem::parallelForImpl(uint32_t count, const std::function<void(uint32
     m_scheduler->WaitforTask(&task);
 }
 
-void TaskSystem::submitImpl(const std::function<void()>& function)
+TaskHandle TaskSystem::submitImpl(std::function<void()> function)
 {
-    auto task = std::make_unique<enki::TaskSet>(
-        [function](enki::TaskSetPartition, uint32_t) { function(); });
-    enki::TaskSet* raw = task.get();
-    {
-        std::lock_guard lock{m_pending_mutex};
-        m_pending.push_back(std::move(task));
-    }
-    m_scheduler->AddTaskSetToPipe(raw);
+    auto task = std::make_shared<enki::TaskSet>(
+            [fn = std::move(function)](enki::TaskSetPartition, uint32_t) { fn(); });
+
+    // 顺序是有讲究的：先占槽位（此时是 pending，回收扫描会跳过它），再入队，最后翻成
+    // launched。反过来先入队的话，任务可能在拿到句柄之前就跑完了，调用方拿到的句柄
+    // 指向哪个槽位就说不清了。
+    const TaskHandle handle = m_pool->insert(task);
+    m_scheduler->AddTaskSetToPipe(task.get());
+    m_pool->markLaunched(handle);
+
+    return handle;
 }
 
 void TaskSystem::pinnedImpl(uint32_t thread_index, const std::function<void()>& function)
@@ -137,21 +142,37 @@ void TaskSystem::waitForPinnedTask()
     }
 }
 
+void TaskSystem::wait(TaskHandle handle)
+{
+    // **先把 shared_ptr 拷出来再等。** find() 自己进出锁，所以调 WaitforTask 时我们不持任何锁
+    // —— 它会在等待期间跑别的任务，那些任务可能又来 submit，持着池子的锁进去就是死锁。
+    const auto task = m_pool->find(handle);
+    if (task) {
+        m_scheduler->WaitforTask(task.get());
+    }
+}
+
+bool TaskSystem::isComplete(TaskHandle handle) const
+{
+    const auto task = m_pool->find(handle);
+    // 找不到 = 槽位已被回收 = 那个任务早完事了。
+    return !task || task->GetIsComplete();
+}
+
 uint32_t TaskSystem::taskThreadCount() const noexcept
 {
     return m_scheduler->GetNumTaskThreads();
 }
 
+std::size_t TaskSystem::taskSlotCount() const
+{
+    return m_pool->slotCount();
+}
+
 void TaskSystem::waitForAll()
 {
-    std::vector<std::unique_ptr<enki::TaskSet>> pending;
-    {
-        std::lock_guard lock{m_pending_mutex};
-        pending.swap(m_pending);
-    }
-    for (const auto& task : pending) {
-        m_scheduler->WaitforTask(task.get());
-    }
+    m_scheduler->WaitforAll();
+    m_pool->reclaimCompleted();
 }
 
 } // namespace arti::core
