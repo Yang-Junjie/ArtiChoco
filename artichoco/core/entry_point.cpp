@@ -1,5 +1,6 @@
 #include "application.h"
 #include "log.h"
+#include "task/task_system.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -36,6 +37,15 @@ void shutdownLogger() noexcept {
         // There is no recovery action to take while the process is exiting.
     }
 }
+
+// 任务系统要在日志之前关：worker 退出的路上还会打日志。
+void shutdownTaskSystem() noexcept {
+    try {
+        arti::core::TaskSystem::shutdown();
+    } catch (...) {
+        // There is no recovery action to take while the process is exiting.
+    }
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -46,6 +56,10 @@ int main(int argc, char** argv) {
     try {
         arti::core::Logger::init(log_path.string(), defaultLogLevel);
         ARTI_CORE_INFO("ArtiChoco starting");
+
+        // 进程级，和 Logger 一样在建 Application 之前 —— 没有 Application 的进程
+        // （asset_tools 那种 CLI）也照样有任务系统可用。
+        arti::core::TaskSystem::init();
 
         auto app = std::unique_ptr<arti::core::Application>{
             arti::core::createApplication(argc, argv)
@@ -64,6 +78,7 @@ int main(int argc, char** argv) {
         reportFatalError("unknown non-standard exception");
     }
 
+    shutdownTaskSystem();
     shutdownLogger();
     return exit_code;
 }
