@@ -54,11 +54,11 @@ uint32_t NvrhiFrameContext::imageIndex() const noexcept
 
 VulkanFrameManager::VulkanFrameManager(core::Window& window, const VulkanDevice& device,
         NvrhiVulkanDevice& nvrhi_device, const VulkanSurface& surface,
-        uint32_t frames_in_flight)
+        uint32_t frames_in_flight, bool vsync)
     : m_window(window),
       m_device(device),
       m_nvrhi_device(nvrhi_device),
-      m_swapchain(window, device, nvrhi_device, surface),
+      m_swapchain(window, device, nvrhi_device, surface, vsync),
       m_nvrhi_command_list(nvrhi_device.device().createCommandList())
 {
     if (frames_in_flight == 0) {
@@ -270,6 +270,25 @@ void VulkanFrameManager::recoverAbandonedFrame()
 void VulkanFrameManager::requestSwapchainRecreation() noexcept
 {
     m_recreate_swapchain = true;
+}
+
+void VulkanFrameManager::setVsync(bool enabled) noexcept
+{
+    if (m_swapchain.vsync() == enabled) {
+        return;
+    }
+    m_swapchain.setVsync(enabled);
+    m_recreate_swapchain = true;
+}
+
+bool VulkanFrameManager::vsync() const noexcept
+{
+    return m_swapchain.vsync();
+}
+
+vk::PresentModeKHR VulkanFrameManager::presentMode() const noexcept
+{
+    return m_swapchain.presentMode();
 }
 
 void VulkanFrameManager::waitIdle() const

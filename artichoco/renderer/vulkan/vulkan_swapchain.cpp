@@ -63,11 +63,20 @@ SwapchainFormat chooseSurfaceFormat(
     return {formats.front(), formats.front().format, false};
 }
 
-vk::PresentModeKHR choosePresentMode(const std::vector<vk::PresentModeKHR>& modes)
+bool supportsPresentMode(const std::vector<vk::PresentModeKHR>& modes, vk::PresentModeKHR mode)
 {
-    return std::ranges::find(modes, vk::PresentModeKHR::eMailbox) != modes.end()
-        ? vk::PresentModeKHR::eMailbox
-        : vk::PresentModeKHR::eFifo;
+    return std::ranges::find(modes, mode) != modes.end();
+}
+
+vk::PresentModeKHR choosePresentMode(const std::vector<vk::PresentModeKHR>& modes, bool vsync)
+{
+    if (!vsync && supportsPresentMode(modes, vk::PresentModeKHR::eImmediate)) {
+        return vk::PresentModeKHR::eImmediate;
+    }
+    if (supportsPresentMode(modes, vk::PresentModeKHR::eMailbox)) {
+        return vk::PresentModeKHR::eMailbox;
+    }
+    return vk::PresentModeKHR::eFifo;
 }
 
 vk::Extent2D chooseExtent(const vk::SurfaceCapabilitiesKHR& capabilities, const core::Window& window)
@@ -116,11 +125,12 @@ nvrhi::Format toNvrhiFormat(vk::Format format)
 } // namespace
 
 VulkanSwapchain::VulkanSwapchain(core::Window& window, const VulkanDevice& device,
-        NvrhiVulkanDevice& nvrhi_device, const VulkanSurface& surface)
+        NvrhiVulkanDevice& nvrhi_device, const VulkanSurface& surface, bool vsync)
     : m_window(window),
       m_device(device),
       m_nvrhi_device(nvrhi_device),
-      m_surface(surface)
+      m_surface(surface),
+      m_vsync(vsync)
 {
     recreate();
 }
@@ -147,7 +157,7 @@ bool VulkanSwapchain::recreate()
 
     const auto swapchain_format = chooseSurfaceFormat(formats, m_device);
     const auto& surface_format = swapchain_format.surface;
-    const auto present_mode = choosePresentMode(present_modes);
+    const auto present_mode = choosePresentMode(present_modes, m_vsync);
     const auto extent = chooseExtent(capabilities, m_window);
     if (extent.width == 0 || extent.height == 0) {
         return false;
@@ -223,6 +233,7 @@ bool VulkanSwapchain::recreate()
     m_image_views = std::move(new_image_views);
     m_format = swapchain_format.view;
     m_extent = extent;
+    m_present_mode = present_mode;
     m_min_image_count = capabilities.minImageCount;
 
     nvrhi::TextureDesc texture_desc = nvrhi::TextureDesc()
@@ -255,10 +266,12 @@ bool VulkanSwapchain::recreate()
     }
 
     getLogChannel().info(
-        "Created Vulkan swapchain ({}x{}, {} images, image {}, view {})",
+        "Created Vulkan swapchain ({}x{}, {} images, {}, vsync {}, image {}, view {})",
         m_extent.width,
         m_extent.height,
         m_images.size(),
+        vk::to_string(m_present_mode),
+        m_vsync,
         vk::to_string(surface_format.format),
         vk::to_string(m_format));
     return true;
@@ -273,6 +286,7 @@ void VulkanSwapchain::invalidate() noexcept
     m_swapchain = vk::raii::SwapchainKHR{nullptr};
     m_format = vk::Format::eUndefined;
     m_extent = vk::Extent2D{};
+    m_present_mode = vk::PresentModeKHR::eFifo;
     m_min_image_count = 0;
 }
 
@@ -314,6 +328,21 @@ vk::Format VulkanSwapchain::format() const noexcept
 vk::Extent2D VulkanSwapchain::extent() const noexcept
 {
     return m_extent;
+}
+
+vk::PresentModeKHR VulkanSwapchain::presentMode() const noexcept
+{
+    return m_present_mode;
+}
+
+bool VulkanSwapchain::vsync() const noexcept
+{
+    return m_vsync;
+}
+
+void VulkanSwapchain::setVsync(bool enabled) noexcept
+{
+    m_vsync = enabled;
 }
 
 uint32_t VulkanSwapchain::minImageCount() const noexcept

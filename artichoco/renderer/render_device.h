@@ -24,6 +24,26 @@ class VulkanSurfaceSource;
 
 namespace arti::renderer {
 
+// Vulkan present mode as seen by the rest of the engine. FIFO is vsync; MAILBOX is
+// vsync with triple-buffering; IMMEDIATE is uncapped and may tear.
+enum class SwapchainPresentMode : uint8_t {
+    Fifo = 0,
+    Mailbox,
+    Immediate,
+};
+
+inline const char* toString(SwapchainPresentMode mode) noexcept {
+    switch (mode) {
+        case SwapchainPresentMode::Mailbox:
+            return "MAILBOX";
+        case SwapchainPresentMode::Immediate:
+            return "IMMEDIATE";
+        case SwapchainPresentMode::Fifo:
+            return "FIFO";
+    }
+    return "FIFO";
+}
+
 struct RenderDeviceCreateInfo {
     std::string application_name{ "ArtiChoco" };
     uint32_t frames_in_flight{ 2 };
@@ -32,12 +52,17 @@ struct RenderDeviceCreateInfo {
 #else
     bool enable_validation{ true };
 #endif
+    // On: MAILBOX if the surface supports it, otherwise FIFO.
+    // Off: IMMEDIATE if supported, otherwise MAILBOX, otherwise FIFO.
+    bool vsync{ true };
 };
 
 struct RenderSwapchainInfo {
     uint32_t width{ 0 };
     uint32_t height{ 0 };
     bool available{ false };
+    SwapchainPresentMode present_mode{ SwapchainPresentMode::Fifo };
+    bool vsync{ true };
 };
 
 struct RenderFrameResult {
@@ -78,6 +103,8 @@ public:
     RenderFormatSupport queryFormatSupport(RenderDeviceFormat format) const noexcept;
     RenderSwapchainInfo swapchainInfo() const noexcept;
     void requestSwapchainRecreation() noexcept;
+    void setVsync(bool enabled) noexcept;
+    bool vsync() const noexcept;
     void waitIdle() const;
 
 private:

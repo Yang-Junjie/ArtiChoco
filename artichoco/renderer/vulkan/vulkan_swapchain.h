@@ -16,7 +16,7 @@ class NvrhiVulkanDevice;
 class VulkanSwapchain {
 public:
     VulkanSwapchain(core::Window& window, const VulkanDevice& device,
-            NvrhiVulkanDevice& nvrhi_device, const VulkanSurface& surface);
+            NvrhiVulkanDevice& nvrhi_device, const VulkanSurface& surface, bool vsync);
 
     VulkanSwapchain(const VulkanSwapchain&) = delete;
     VulkanSwapchain& operator=(const VulkanSwapchain&) = delete;
@@ -32,6 +32,9 @@ public:
     nvrhi::IFramebuffer& nvrhiFramebuffer(uint32_t index) const;
     vk::Format format() const noexcept;
     vk::Extent2D extent() const noexcept;
+    vk::PresentModeKHR presentMode() const noexcept;
+    bool vsync() const noexcept;
+    void setVsync(bool enabled) noexcept;
     uint32_t minImageCount() const noexcept;
     size_t imageCount() const noexcept;
 
@@ -47,6 +50,8 @@ private:
     std::vector<nvrhi::FramebufferHandle> m_nvrhi_framebuffers;
     vk::Format m_format{vk::Format::eUndefined};
     vk::Extent2D m_extent{};
+    vk::PresentModeKHR m_present_mode{vk::PresentModeKHR::eFifo};
+    bool m_vsync{true};
     uint32_t m_min_image_count{0};
 };
 

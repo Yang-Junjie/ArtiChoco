@@ -23,7 +23,9 @@ The native Vulkan boundary is limited to bootstrap and presentation:
 2. `VulkanContext` creates the instance and validation messenger.
 3. `VulkanDevice` selects the physical device and graphics/present queues.
 4. `VulkanSwapchain` creates image views and exposes the native swapchain for
-   acquire and present.
+   acquire and present. Present mode follows `RenderDeviceCreateInfo::vsync`:
+   on → MAILBOX else FIFO; off → IMMEDIATE else MAILBOX else FIFO.
+   `RenderDevice::setVsync` marks the swapchain for recreation.
 5. `VulkanFrameManager` acquires an image with a native semaphore, records NVRHI
    commands, bridges NVRHI queue wait/signal calls, and presents with the native
    present queue.

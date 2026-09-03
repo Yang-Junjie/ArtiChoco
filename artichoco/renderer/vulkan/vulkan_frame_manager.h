@@ -51,7 +51,7 @@ class VulkanFrameManager {
 public:
     VulkanFrameManager(core::Window& window, const VulkanDevice& device,
             NvrhiVulkanDevice& nvrhi_device, const VulkanSurface& surface,
-            uint32_t frames_in_flight);
+            uint32_t frames_in_flight, bool vsync);
     ~VulkanFrameManager();
 
     VulkanFrameManager(const VulkanFrameManager&) = delete;
@@ -62,6 +62,9 @@ public:
     NvrhiClearFrameResult renderNvrhiClearFrame(const nvrhi::Color& clear_color);
 
     void requestSwapchainRecreation() noexcept;
+    void setVsync(bool enabled) noexcept;
+    bool vsync() const noexcept;
+    vk::PresentModeKHR presentMode() const noexcept;
     void waitIdle() const;
     size_t frameSlotCount() const noexcept;
     uint32_t swapchainWidth() const noexcept;

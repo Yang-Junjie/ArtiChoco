@@ -58,6 +58,8 @@ struct RenderDevice::Impl final : detail::ResourceOwner,
     RenderFormatSupport queryFormatSupport(RenderDeviceFormat format) const noexcept;
     RenderSwapchainInfo swapchainInfo() const noexcept;
     void requestSwapchainRecreation() noexcept;
+    void setVsync(bool enabled) noexcept;
+    bool vsync() const noexcept;
     void waitIdle() const;
 
     VertexBuffer createVertexBuffer(std::span<const std::byte> data, uint32_t vertex_count,
@@ -91,9 +93,10 @@ RenderDevice::Impl::Impl(core::Window& window,
           m_surface(m_context.instance(), requireSurfaceSource(m_surface_source)),
           m_device(m_context.instance(), m_surface.handle()),
           m_nvrhi_device(m_context, m_device, info.enable_validation),
-          m_frame_manager(window, m_device, m_nvrhi_device, m_surface, info.frames_in_flight) {
-    getLogChannel().info("Initialized Vulkan renderer with {} frames in flight",
-            m_frame_manager.frameSlotCount());
+          m_frame_manager(window, m_device, m_nvrhi_device, m_surface, info.frames_in_flight,
+                  info.vsync) {
+    getLogChannel().info("Initialized Vulkan renderer with {} frames in flight (vsync {})",
+            m_frame_manager.frameSlotCount(), info.vsync);
 }
 
 RenderDevice::Impl::~Impl() {
@@ -224,11 +227,24 @@ RenderFormatSupport RenderDevice::Impl::queryFormatSupport(
     return result;
 }
 
+SwapchainPresentMode toSwapchainPresentMode(vk::PresentModeKHR mode) noexcept {
+    switch (mode) {
+        case vk::PresentModeKHR::eMailbox:
+            return SwapchainPresentMode::Mailbox;
+        case vk::PresentModeKHR::eImmediate:
+            return SwapchainPresentMode::Immediate;
+        default:
+            return SwapchainPresentMode::Fifo;
+    }
+}
+
 RenderSwapchainInfo RenderDevice::Impl::swapchainInfo() const noexcept {
     return {
         m_frame_manager.swapchainWidth(),
         m_frame_manager.swapchainHeight(),
         m_frame_manager.swapchainIsRenderable(),
+        toSwapchainPresentMode(m_frame_manager.presentMode()),
+        m_frame_manager.vsync(),
     };
 }
 
@@ -236,6 +252,10 @@ RenderSwapchainInfo RenderDevice::Impl::swapchainInfo() const noexcept {
 void RenderDevice::Impl::requestSwapchainRecreation() noexcept {
     m_frame_manager.requestSwapchainRecreation();
 }
+
+void RenderDevice::Impl::setVsync(bool enabled) noexcept { m_frame_manager.setVsync(enabled); }
+
+bool RenderDevice::Impl::vsync() const noexcept { return m_frame_manager.vsync(); }
 
 void RenderDevice::Impl::waitIdle() const { m_frame_manager.waitIdle(); }
 
@@ -292,6 +312,10 @@ RenderFormatSupport RenderDevice::queryFormatSupport(RenderDeviceFormat format) 
 RenderSwapchainInfo RenderDevice::swapchainInfo() const noexcept { return m_impl->swapchainInfo(); }
 
 void RenderDevice::requestSwapchainRecreation() noexcept { m_impl->requestSwapchainRecreation(); }
+
+void RenderDevice::setVsync(bool enabled) noexcept { m_impl->setVsync(enabled); }
+
+bool RenderDevice::vsync() const noexcept { return m_impl->vsync(); }
 
 void RenderDevice::waitIdle() const { m_impl->waitIdle(); }
 
