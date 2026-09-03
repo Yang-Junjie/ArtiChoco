@@ -1,4 +1,5 @@
 #pragma once
+#include "artichoco/core/task/task_system.h"
 #include "artichoco/renderer/render_frame_queue.h"
 #include "artichoco/scene/system.h"
 #include "frame_data.h"
@@ -59,6 +60,7 @@ private:
 
     renderer::RenderFrameQueue<RenderFrameData> m_frame_queue;
     std::atomic<bool> m_shutdown_requested{false};
+    core::TaskHandle m_render_thread_task;
     std::mutex m_pass_mutex;
     std::mutex m_error_mutex;
     std::exception_ptr m_last_render_error;

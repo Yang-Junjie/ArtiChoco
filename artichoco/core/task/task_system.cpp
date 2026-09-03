@@ -28,6 +28,20 @@ void onTaskThreadStart(uint32_t thread_index)
     }
 }
 
+enki::TaskPriority toEnkiPriority(TaskPriority priority)
+{
+    switch (priority) {
+    case TaskPriority::High:
+        return enki::TASK_PRIORITY_HIGH;
+    case TaskPriority::Low:
+        return enki::TASK_PRIORITY_LOW;
+    case TaskPriority::Normal:
+        break;
+    }
+
+    return enki::TASK_PRIORITY_MED;
+}
+
 } // namespace
 
 void TaskSystem::init(const TaskSystemConfig& config)
@@ -39,7 +53,7 @@ void TaskSystem::init(const TaskSystemConfig& config)
 
     s_instance = new TaskSystem(config);
     ARTI_CORE_INFO("TaskSystem initialized: {} thread(s) including the calling thread",
-            s_instance->taskThreadCount());
+            s_instance->threadCount());
 }
 
 void TaskSystem::shutdown()
@@ -95,25 +109,61 @@ TaskSystem::~TaskSystem()
     s_name_threads = false;
 }
 
-void TaskSystem::parallelForImpl(uint32_t count, const std::function<void(uint32_t)>& function)
+void TaskSystem::parallelForRangesImpl(
+        uint32_t count, const ParallelForRangeFunction& function, ParallelForOptions options)
 {
-    enki::TaskSet task{count, [&function](enki::TaskSetPartition range, uint32_t) {
-                          for (uint32_t index = range.start; index < range.end; ++index) {
-                              function(index);
-                          }
-                      }};
+    enki::TaskSet task{count,
+            [&function](enki::TaskSetPartition range, uint32_t thread_index) {
+                function(range.start, range.end, thread_index);
+            }};
+    task.m_MinRange = options.min_range > 0 ? options.min_range : 1;
+    task.m_Priority = toEnkiPriority(options.priority);
+
     m_scheduler->AddTaskSetToPipe(&task);
     m_scheduler->WaitforTask(&task);
 }
 
-TaskHandle TaskSystem::submitImpl(std::function<void()> function)
+TaskHandle TaskSystem::submitParallelForRangesImpl(
+        uint32_t count, ParallelForRangeFunction function, ParallelForOptions options)
+{
+    auto task = std::make_shared<enki::TaskSet>(count,
+            [fn = std::move(function)](enki::TaskSetPartition range, uint32_t thread_index) {
+                fn(range.start, range.end, thread_index);
+            });
+    task->m_MinRange = options.min_range > 0 ? options.min_range : 1;
+    task->m_Priority = toEnkiPriority(options.priority);
+
+    return launch(std::move(task));
+}
+
+TaskHandle TaskSystem::submitImpl(std::function<void()> function, TaskPriority priority)
 {
     auto task = std::make_shared<enki::TaskSet>(
             [fn = std::move(function)](enki::TaskSetPartition, uint32_t) { fn(); });
+    task->m_Priority = toEnkiPriority(priority);
 
+    return launch(std::move(task));
+}
+
+TaskHandle TaskSystem::submitPinnedImpl(uint32_t thread_index, std::function<void()> function)
+{
+    if (thread_index >= threadCount()) {
+        throw std::logic_error("TaskSystem::submitPinned thread_index is out of range.");
+    }
+
+    auto task = std::make_shared<enki::LambdaPinnedTask>(thread_index, std::move(function));
+    return launchPinned(std::move(task));
+}
+
+void TaskSystem::runPinnedTasks()
+{
+    m_scheduler->RunPinnedTasks();
+}
+
+TaskHandle TaskSystem::launch(std::shared_ptr<enki::TaskSet> task)
+{
     // 顺序是有讲究的：先占槽位（此时是 pending，回收扫描会跳过它），再入队，最后翻成
-    // launched。反过来先入队的话，任务可能在拿到句柄之前就跑完了，调用方拿到的句柄
-    // 指向哪个槽位就说不清了。
+    // launched。反过来先入队的话，任务可能在拿到句柄之前就跑完并被回收掉。
     const TaskHandle handle = m_pool->insert(task);
     m_scheduler->AddTaskSetToPipe(task.get());
     m_pool->markLaunched(handle);
@@ -121,25 +171,13 @@ TaskHandle TaskSystem::submitImpl(std::function<void()> function)
     return handle;
 }
 
-void TaskSystem::pinnedImpl(uint32_t thread_index, const std::function<void()>& function)
+TaskHandle TaskSystem::launchPinned(std::shared_ptr<enki::LambdaPinnedTask> task)
 {
-    enki::LambdaPinnedTask task{thread_index, function};
-    m_scheduler->AddPinnedTask(&task);
-    m_scheduler->WaitforTask(&task);
-    m_scheduler->RunPinnedTasks();
-}
+    const TaskHandle handle = m_pool->insert(task);
+    m_scheduler->AddPinnedTask(task.get());
+    m_pool->markLaunched(handle);
 
-void TaskSystem::launchPinned(uint32_t thread_index, const std::function<void()>& function)
-{
-    m_pinned_task = std::make_unique<enki::LambdaPinnedTask>(thread_index, function);
-    m_scheduler->AddPinnedTask(m_pinned_task.get());
-}
-
-void TaskSystem::waitForPinnedTask()
-{
-    if (m_pinned_task) {
-        m_scheduler->WaitforTask(m_pinned_task.get());
-    }
+    return handle;
 }
 
 void TaskSystem::wait(TaskHandle handle)
@@ -159,9 +197,29 @@ bool TaskSystem::isComplete(TaskHandle handle) const
     return !task || task->GetIsComplete();
 }
 
-uint32_t TaskSystem::taskThreadCount() const noexcept
+uint32_t TaskSystem::threadIndex() const noexcept
+{
+    return m_scheduler->GetThreadNum();
+}
+
+uint32_t TaskSystem::threadCount() const noexcept
 {
     return m_scheduler->GetNumTaskThreads();
+}
+
+uint32_t TaskSystem::workerCount() const noexcept
+{
+    return m_scheduler->GetConfig().numTaskThreadsToCreate;
+}
+
+bool TaskSystem::registerExternalThread()
+{
+    return m_scheduler->RegisterExternalTaskThread();
+}
+
+void TaskSystem::deregisterExternalThread()
+{
+    m_scheduler->DeRegisterExternalTaskThread();
 }
 
 std::size_t TaskSystem::taskSlotCount() const

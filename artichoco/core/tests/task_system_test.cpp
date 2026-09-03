@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #if defined(_WIN32)
@@ -26,7 +27,9 @@
 
 namespace {
 
+using arti::core::ParallelForOptions;
 using arti::core::TaskHandle;
+using arti::core::TaskPriority;
 using arti::core::TaskSystem;
 using arti::core::TaskSystemConfig;
 
@@ -113,18 +116,26 @@ int testWorkerCount(uint32_t worker_count) {
         return 1;
     }
 
-    const uint32_t expected = worker_count + 1;
-    const uint32_t actual = TaskSystem::get().taskThreadCount();
-    if (!require(actual == expected,
-                "worker_count=" + std::to_string(worker_count) + " 时 taskThreadCount 应该是 " +
-                        std::to_string(expected) + "，实际是 " + std::to_string(actual))) {
+    const uint32_t expected_threads = worker_count + 1;
+    const uint32_t actual_threads = TaskSystem::get().threadCount();
+    const uint32_t actual_workers = TaskSystem::get().workerCount();
+    if (!require(actual_threads == expected_threads,
+                "worker_count=" + std::to_string(worker_count) + " 时 threadCount 应该是 " +
+                        std::to_string(expected_threads) + "，实际是 " +
+                        std::to_string(actual_threads))) {
+        TaskSystem::shutdown();
+        return 1;
+    }
+    if (!require(actual_workers == worker_count,
+                "workerCount 应该等于配置的 worker_count，实际 " +
+                        std::to_string(actual_workers))) {
         TaskSystem::shutdown();
         return 1;
     }
 
     // 重复 init 是空操作：线程池是进程级资源，在有任务在跑的时候拆了重建比忽略更危险。
     TaskSystem::init(TaskSystemConfig{ .worker_count = worker_count + 3 });
-    if (!require(TaskSystem::get().taskThreadCount() == expected,
+    if (!require(TaskSystem::get().threadCount() == expected_threads,
                 "重复 init 不该换掉已有的 scheduler")) {
         TaskSystem::shutdown();
         return 1;
@@ -259,6 +270,317 @@ int testWaitForAll() {
     return failures == 0 ? 0 : 1;
 }
 
+// 阻塞 parallelFor：每个下标写一次，结果必须刚好覆盖 [0, N)。
+int testParallelFor() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 4 });
+    auto& tasks = TaskSystem::get();
+
+    constexpr uint32_t kCount = 4096;
+    std::vector<std::atomic<uint32_t>> seen(kCount);
+    for (auto& slot: seen) {
+        slot.store(0, std::memory_order_relaxed);
+    }
+
+    tasks.parallelFor(kCount, [&seen](uint32_t index) {
+        seen[index].fetch_add(1, std::memory_order_relaxed);
+    });
+
+    int failures = 0;
+    for (uint32_t index = 0; index < kCount; ++index) {
+        const uint32_t hits = seen[index].load(std::memory_order_relaxed);
+        if (hits != 1) {
+            ++failures;
+            static_cast<void>(require(false,
+                    "parallelFor 下标 " + std::to_string(index) + " 被写了 " +
+                            std::to_string(hits) + " 次"));
+            break;
+        }
+    }
+
+    TaskSystem::shutdown();
+    return failures == 0 ? 0 : 1;
+}
+
+// grain size：min_range = count 时 enkiTS 不能再切，回调必须只进一次。
+int testMinRangeOnePartition() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 4 });
+    auto& tasks = TaskSystem::get();
+
+    constexpr uint32_t kCount = 1024;
+    std::atomic<uint32_t> partitions{ 0 };
+    std::atomic<uint32_t> covered{ 0 };
+
+    tasks.parallelForRanges(
+            kCount,
+            [&](uint32_t begin, uint32_t end, uint32_t) {
+                partitions.fetch_add(1, std::memory_order_relaxed);
+                covered.fetch_add(end - begin, std::memory_order_relaxed);
+            },
+            ParallelForOptions{ .min_range = kCount });
+
+    const uint32_t partition_count = partitions.load(std::memory_order_relaxed);
+    const uint32_t covered_count = covered.load(std::memory_order_relaxed);
+    TaskSystem::shutdown();
+
+    int failures = 0;
+    if (!require(partition_count == 1,
+                "min_range=count 应该只出一个 partition，实际 " +
+                        std::to_string(partition_count))) {
+        ++failures;
+    }
+    if (!require(covered_count == kCount,
+                "唯一的 partition 应该覆盖全部 " + std::to_string(kCount) +
+                        "，实际 " + std::to_string(covered_count))) {
+        ++failures;
+    }
+    return failures == 0 ? 0 : 1;
+}
+
+// min_range == 0 夹到 1，不能让 enkiTS 除零或切出空片。
+int testMinRangeZeroClamped() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 2 });
+    auto& tasks = TaskSystem::get();
+
+    constexpr uint32_t kCount = 64;
+    std::atomic<uint32_t> covered{ 0 };
+    tasks.parallelForRanges(
+            kCount,
+            [&](uint32_t begin, uint32_t end, uint32_t) {
+                covered.fetch_add(end - begin, std::memory_order_relaxed);
+            },
+            ParallelForOptions{ .min_range = 0 });
+
+    const uint32_t covered_count = covered.load(std::memory_order_relaxed);
+    TaskSystem::shutdown();
+
+    if (!require(covered_count == kCount,
+                "min_range=0 夹到 1 之后仍应覆盖全部，实际 " +
+                        std::to_string(covered_count))) {
+        return 1;
+    }
+    return 0;
+}
+
+// 异步 parallelFor：物理桥要的就是「拿一个可等待的东西回来」。
+int testSubmitParallelFor() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 4 });
+    auto& tasks = TaskSystem::get();
+
+    constexpr uint32_t kCount = 2048;
+    std::vector<std::atomic<uint32_t>> seen(kCount);
+    for (auto& slot: seen) {
+        slot.store(0, std::memory_order_relaxed);
+    }
+
+    const TaskHandle handle = tasks.submitParallelFor(kCount, [&seen](uint32_t index) {
+        seen[index].fetch_add(1, std::memory_order_relaxed);
+    });
+    if (!require(handle.valid(), "submitParallelFor 应该返回有效句柄")) {
+        TaskSystem::shutdown();
+        return 1;
+    }
+
+    tasks.wait(handle);
+
+    int failures = 0;
+    if (!require(tasks.isComplete(handle), "wait 之后 isComplete 应该为真")) {
+        ++failures;
+    }
+    for (uint32_t index = 0; index < kCount; ++index) {
+        const uint32_t hits = seen[index].load(std::memory_order_relaxed);
+        if (hits != 1) {
+            ++failures;
+            static_cast<void>(require(false,
+                    "submitParallelFor 下标 " + std::to_string(index) + " 被写了 " +
+                            std::to_string(hits) + " 次"));
+            break;
+        }
+    }
+
+    TaskSystem::shutdown();
+    return failures == 0 ? 0 : 1;
+}
+
+// 三档都能提交并完成。优先级的**效果**这一层不做断言（那半边是 WaitforTask 的
+// priorityOfLowestToRun_，D5 明确留下）。
+int testPriorities() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 2 });
+    auto& tasks = TaskSystem::get();
+
+    std::atomic<uint32_t> counter{ 0 };
+    const TaskHandle high = tasks.submit(
+            [&counter] { counter.fetch_add(1, std::memory_order_relaxed); }, TaskPriority::High);
+    const TaskHandle normal = tasks.submit(
+            [&counter] { counter.fetch_add(1, std::memory_order_relaxed); }, TaskPriority::Normal);
+    const TaskHandle low = tasks.submit(
+            [&counter] { counter.fetch_add(1, std::memory_order_relaxed); }, TaskPriority::Low);
+
+    const TaskHandle ranged = tasks.submitParallelForRanges(
+            32,
+            [&counter](uint32_t begin, uint32_t end, uint32_t) {
+                counter.fetch_add(end - begin, std::memory_order_relaxed);
+            },
+            ParallelForOptions{ .priority = TaskPriority::High });
+
+    tasks.wait(high);
+    tasks.wait(normal);
+    tasks.wait(low);
+    tasks.wait(ranged);
+
+    const uint32_t ran = counter.load(std::memory_order_relaxed);
+    TaskSystem::shutdown();
+
+    if (!require(ran == 35, "三档优先级加上一个 High 的 range 任务应该一共跑 35，实际 " +
+                            std::to_string(ran))) {
+        return 1;
+    }
+    return 0;
+}
+
+// pinned 任务必须落在指定的 enkiTS 线程上。这是旧 launchPinned 单槽位 UAF 的正面用例。
+int testPinnedThreadIndex() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 2 });
+    auto& tasks = TaskSystem::get();
+
+    std::atomic<uint32_t> observed{ TaskSystem::kNoThread };
+    const TaskHandle handle = tasks.submitPinned(1, [&tasks, &observed] {
+        observed.store(tasks.threadIndex(), std::memory_order_relaxed);
+    });
+    tasks.wait(handle);
+
+    const uint32_t thread = observed.load(std::memory_order_relaxed);
+    TaskSystem::shutdown();
+
+    if (!require(thread == 1, "submitPinned(1) 应该跑在线程 1 上，实际 " + std::to_string(thread))) {
+        return 1;
+    }
+    return 0;
+}
+
+// 旧 API 只有一个 m_pinned_task 槽位，第二次 launchPinned 会把第一次的对象 unique_ptr 掉。
+int testPinnedTwice() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 2 });
+    auto& tasks = TaskSystem::get();
+
+    std::atomic<uint32_t> counter{ 0 };
+    const TaskHandle first = tasks.submitPinned(1, [&counter] {
+        counter.fetch_add(1, std::memory_order_relaxed);
+    });
+    const TaskHandle second = tasks.submitPinned(1, [&counter] {
+        counter.fetch_add(1, std::memory_order_relaxed);
+    });
+    tasks.wait(first);
+    tasks.wait(second);
+
+    const uint32_t ran = counter.load(std::memory_order_relaxed);
+    TaskSystem::shutdown();
+
+    if (!require(ran == 2, "连续两次 submitPinned 都该跑到，实际 " + std::to_string(ran))) {
+        return 1;
+    }
+    return 0;
+}
+
+// 钉在调用线程（0）上：WaitforTask 会顺手跑本线程的 pinned 队列，不需要单独泵。
+int testPinnedOnCaller() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 1 });
+    auto& tasks = TaskSystem::get();
+
+    std::atomic<uint32_t> observed{ TaskSystem::kNoThread };
+    const TaskHandle handle = tasks.submitPinned(0, [&tasks, &observed] {
+        observed.store(tasks.threadIndex(), std::memory_order_relaxed);
+    });
+    tasks.wait(handle);
+
+    const uint32_t thread = observed.load(std::memory_order_relaxed);
+    TaskSystem::shutdown();
+
+    if (!require(thread == 0, "submitPinned(0) 应该跑在调用线程上，实际 " + std::to_string(thread))) {
+        return 1;
+    }
+    return 0;
+}
+
+// 外部线程：注册后有合法下标、能 submit/wait；注销后回到 kNoThread。
+int testExternalThread() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 2, .external_thread_count = 1 });
+    auto& tasks = TaskSystem::get();
+
+    int failures = 0;
+    if (!require(tasks.threadIndex() == 0, "init 所在线程的 threadIndex 应该是 0")) {
+        ++failures;
+    }
+    if (!require(tasks.threadCount() == 4,
+                "2 worker + 1 external + 调用线程，threadCount 应该是 4，实际 " +
+                        std::to_string(tasks.threadCount()))) {
+        ++failures;
+    }
+    if (!require(tasks.workerCount() == 2,
+                "有外部槽位时 workerCount 仍应是 2，不是 threadCount()-1")) {
+        ++failures;
+    }
+
+    std::atomic<uint32_t> before{ 0 };
+    std::atomic<bool> registered_ok{ false };
+    std::atomic<uint32_t> registered_index{ TaskSystem::kNoThread };
+    std::atomic<uint32_t> work{ 0 };
+    std::atomic<uint32_t> after{ 0 };
+
+    std::thread external([&] {
+        before.store(tasks.threadIndex(), std::memory_order_relaxed);
+        registered_ok.store(tasks.registerExternalThread());
+        registered_index.store(tasks.threadIndex(), std::memory_order_relaxed);
+
+        const TaskHandle handle =
+                tasks.submit([&work] { work.fetch_add(1, std::memory_order_relaxed); });
+        tasks.wait(handle);
+
+        tasks.deregisterExternalThread();
+        after.store(tasks.threadIndex(), std::memory_order_relaxed);
+    });
+    external.join();
+
+    if (!require(before.load(std::memory_order_relaxed) == TaskSystem::kNoThread,
+                "没注册的 std::thread 应该是 kNoThread")) {
+        ++failures;
+    }
+    if (!require(registered_ok.load(std::memory_order_relaxed), "留了 1 个外部槽位，注册应该成功")) {
+        ++failures;
+    }
+    const uint32_t index = registered_index.load(std::memory_order_relaxed);
+    if (!require(index != TaskSystem::kNoThread && index < tasks.threadCount(),
+                "注册后 threadIndex 应该落在 [1, threadCount)")) {
+        ++failures;
+    }
+    if (!require(work.load(std::memory_order_relaxed) == 1, "外部线程上 submit/wait 应该能跑完任务")) {
+        ++failures;
+    }
+    if (!require(after.load(std::memory_order_relaxed) == TaskSystem::kNoThread,
+                "注销后 threadIndex 应该回到 kNoThread")) {
+        ++failures;
+    }
+
+    TaskSystem::shutdown();
+    return failures == 0 ? 0 : 1;
+}
+
+int testExternalThreadWithoutSlot() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 1, .external_thread_count = 0 });
+    auto& tasks = TaskSystem::get();
+
+    std::atomic<bool> registered_ok{ true };
+    std::thread extra([&] { registered_ok.store(tasks.registerExternalThread()); });
+    extra.join();
+
+    const bool ok = registered_ok.load(std::memory_order_relaxed);
+    TaskSystem::shutdown();
+
+    if (!require(!ok, "没留外部槽位时 registerExternalThread 应该失败")) {
+        return 1;
+    }
+    return 0;
+}
+
 int run() {
     if (testGetBeforeInit() != 0) {
         return 1;
@@ -279,6 +601,36 @@ int run() {
         return 1;
     }
     if (testWaitForAll() != 0) {
+        return 1;
+    }
+    if (testParallelFor() != 0) {
+        return 1;
+    }
+    if (testMinRangeOnePartition() != 0) {
+        return 1;
+    }
+    if (testMinRangeZeroClamped() != 0) {
+        return 1;
+    }
+    if (testSubmitParallelFor() != 0) {
+        return 1;
+    }
+    if (testPriorities() != 0) {
+        return 1;
+    }
+    if (testPinnedThreadIndex() != 0) {
+        return 1;
+    }
+    if (testPinnedTwice() != 0) {
+        return 1;
+    }
+    if (testPinnedOnCaller() != 0) {
+        return 1;
+    }
+    if (testExternalThread() != 0) {
+        return 1;
+    }
+    if (testExternalThreadWithoutSlot() != 0) {
         return 1;
     }
 

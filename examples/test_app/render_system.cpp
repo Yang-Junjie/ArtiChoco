@@ -37,17 +37,17 @@ void RenderSystem::onAttach(scene::Scene& scene) {
     if (m_render_thread_started) {
         return;
     }
-    if (core::TaskSystem::get().taskThreadCount() < 2) {
+    if (core::TaskSystem::get().threadCount() < 2) {
         throw std::runtime_error("The render thread requires at least one task worker thread.");
     }
-    core::TaskSystem::get().launchPinned(1, [this] { renderThreadLoop(); });
+    m_render_thread_task = core::TaskSystem::get().submitPinned(1, [this] { renderThreadLoop(); });
     m_render_thread_started = true;
 }
 
 void RenderSystem::onDetach(scene::Scene& scene) {
     m_shutdown_requested.store(true, std::memory_order_release);
     m_frame_queue.shutdown();
-    core::TaskSystem::get().waitForPinnedTask();
+    core::TaskSystem::get().wait(m_render_thread_task);
     m_render_device.waitIdle();
 }
 
