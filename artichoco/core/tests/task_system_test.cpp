@@ -689,6 +689,32 @@ int testGraphPinnedUpload() {
     return failures == 0 ? 0 : 1;
 }
 
+// 带在途任务时 shutdown()。析构里是 WaitforAllAndShutdown()（先等完再停线程），所以
+// 池子被销毁时所有任务都已完成 —— enkiTS 的 ~ICompletable 里有 GetIsComplete() 的断言，
+// 顺序错了在 Debug 构建下会当场炸。
+int testShutdownWithTasksInFlight() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 4 });
+    auto& tasks = TaskSystem::get();
+
+    // 用 shared_ptr 让任务体不依赖这个栈帧：shutdown 之后计数器还得活着让我们读。
+    auto ran = std::make_shared<std::atomic<uint32_t>>(0);
+    constexpr uint32_t kCount = 512;
+    for (uint32_t index = 0; index < kCount; ++index) {
+        // 故意一个都不 wait，让 shutdown 撞上在途任务。
+        static_cast<void>(tasks.submit([ran] { ran->fetch_add(1, std::memory_order_relaxed); }));
+    }
+
+    TaskSystem::shutdown();
+
+    const uint32_t value = ran->load(std::memory_order_relaxed);
+    if (!require(value == kCount,
+                "shutdown 应该先等在途任务跑完，实际只跑了 " + std::to_string(value) + "/" +
+                        std::to_string(kCount))) {
+        return 1;
+    }
+    return 0;
+}
+
 // **本任务的核心验收**：一个足够大的 parallelFor 必须真的被多个线程执行过。
 // 没有这一条，「所有活都在调用线程上跑完」的实现也能把其它断言全过掉 —— 而那正是
 // 「没有真正意义上的多线程能力」。
@@ -811,6 +837,9 @@ int run() {
         return 1;
     }
     if (testGraphPinnedUpload() != 0) {
+        return 1;
+    }
+    if (testShutdownWithTasksInFlight() != 0) {
         return 1;
     }
     if (testReallyRunsOnMultipleThreads(4) != 0) {
