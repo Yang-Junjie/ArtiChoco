@@ -14,6 +14,8 @@ class LambdaPinnedTask;
 
 namespace arti::core {
 
+class TaskGraph;
+
 namespace detail {
 class TaskPool;
 } // namespace detail
@@ -146,6 +148,9 @@ public:
                 thread_index, [fn = std::forward<Fn>(function)]() mutable { fn(); });
     }
 
+    // 整张图一个句柄。依赖边必须在入队前连好，所以参数是已经建完的图，不是运行中的句柄。
+    TaskHandle submit(TaskGraph&& graph);
+
     // 当前线程把自己 pinned 队列排空。WaitforTask 在等待期间会顺手跑本线程的 pinned，
     // 所以普通 wait() 不需要先调这个；需要的是「我这条线程只吃 pinned、自己泵队列」那种循环。
     void runPinnedTasks();
@@ -203,3 +208,5 @@ private:
 };
 
 } // namespace arti::core
+
+#include "task_graph.h"

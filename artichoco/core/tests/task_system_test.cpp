@@ -28,6 +28,7 @@
 namespace {
 
 using arti::core::ParallelForOptions;
+using arti::core::TaskGraph;
 using arti::core::TaskHandle;
 using arti::core::TaskPriority;
 using arti::core::TaskSystem;
@@ -581,6 +582,176 @@ int testExternalThreadWithoutSlot() {
     return 0;
 }
 
+// 建图不提交时什么都不该跑。这是 D4 的第一道门：依赖边连上不等于入队。
+int testGraphBuildDoesNotRun() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 2 });
+
+    std::atomic<uint32_t> ran{ 0 };
+    {
+        TaskGraph graph;
+        const auto node = graph.add([&ran] { ran.fetch_add(1, std::memory_order_relaxed); });
+        static_cast<void>(node);
+    }
+
+    const uint32_t value = ran.load(std::memory_order_relaxed);
+    TaskSystem::shutdown();
+    if (!require(value == 0, "没 submit 的图不该跑，实际跑了 " + std::to_string(value))) {
+        return 1;
+    }
+    return 0;
+}
+
+// 菱形 A → {B, C} → D。用原子标志断言顺序，不用 sleep。
+int testGraphDiamond() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 4 });
+    auto& tasks = TaskSystem::get();
+
+    std::atomic<uint32_t> a_done{ 0 };
+    std::atomic<uint32_t> b_done{ 0 };
+    std::atomic<uint32_t> c_done{ 0 };
+    std::atomic<uint32_t> d_runs{ 0 };
+    std::atomic<uint32_t> order_failures{ 0 };
+
+    TaskGraph graph;
+    const auto a = graph.add([&] { a_done.store(1, std::memory_order_release); });
+    const auto b = graph.addAfter({ a }, [&] {
+        if (a_done.load(std::memory_order_acquire) != 1) {
+            order_failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        b_done.store(1, std::memory_order_release);
+    });
+    const auto c = graph.addAfter({ a }, [&] {
+        if (a_done.load(std::memory_order_acquire) != 1) {
+            order_failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        c_done.store(1, std::memory_order_release);
+    });
+    const auto d = graph.addAfter({ b, c }, [&] {
+        if (b_done.load(std::memory_order_acquire) != 1 ||
+                c_done.load(std::memory_order_acquire) != 1) {
+            order_failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        d_runs.fetch_add(1, std::memory_order_relaxed);
+    });
+    static_cast<void>(d);
+
+    const TaskHandle handle = tasks.submit(std::move(graph));
+    tasks.wait(handle);
+
+    int failures = 0;
+    if (!require(d_runs.load(std::memory_order_relaxed) == 1, "菱形的 D 应该只跑一次")) {
+        ++failures;
+    }
+    if (!require(order_failures.load(std::memory_order_relaxed) == 0,
+                "菱形的 B/C 必须在 A 之后，D 必须在 B 和 C 都完成之后")) {
+        ++failures;
+    }
+    if (!require(tasks.isComplete(handle), "等过之后图句柄应该报完成")) {
+        ++failures;
+    }
+
+    TaskSystem::shutdown();
+    return failures == 0 ? 0 : 1;
+}
+
+// 层二「解码 + 上传」的形状：worker 上 decode，钉在线程 1 上 upload。
+int testGraphPinnedUpload() {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = 2 });
+    auto& tasks = TaskSystem::get();
+
+    std::atomic<uint32_t> decoded{ 0 };
+    std::atomic<uint32_t> uploaded_on{ TaskSystem::kNoThread };
+    std::atomic<uint32_t> order_failures{ 0 };
+
+    TaskGraph graph;
+    const auto decode = graph.add([&] { decoded.store(1, std::memory_order_release); });
+    const auto upload = graph.addPinnedAfter({ decode }, 1, [&] {
+        if (decoded.load(std::memory_order_acquire) != 1) {
+            order_failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        uploaded_on.store(tasks.threadIndex(), std::memory_order_relaxed);
+    });
+    static_cast<void>(upload);
+
+    tasks.wait(tasks.submit(std::move(graph)));
+
+    int failures = 0;
+    if (!require(order_failures.load(std::memory_order_relaxed) == 0, "upload 必须在 decode 之后")) {
+        ++failures;
+    }
+    if (!require(uploaded_on.load(std::memory_order_relaxed) == 1,
+                "upload 应该钉在线程 1，实际 " +
+                        std::to_string(uploaded_on.load(std::memory_order_relaxed)))) {
+        ++failures;
+    }
+
+    TaskSystem::shutdown();
+    return failures == 0 ? 0 : 1;
+}
+
+// **本任务的核心验收**：一个足够大的 parallelFor 必须真的被多个线程执行过。
+// 没有这一条，「所有活都在调用线程上跑完」的实现也能把其它断言全过掉 —— 而那正是
+// 「没有真正意义上的多线程能力」。
+int testReallyRunsOnMultipleThreads(uint32_t worker_count) {
+    TaskSystem::init(TaskSystemConfig{ .worker_count = worker_count });
+    auto& tasks = TaskSystem::get();
+
+    // 每线程一个桶（threadIndex 的正经用途），事后合并，避免测试自己引入共享写。
+    std::vector<std::atomic<uint32_t>> hits(tasks.threadCount());
+    for (auto& slot: hits) {
+        slot.store(0, std::memory_order_relaxed);
+    }
+
+    // 活量要够：每个 partition 太轻的话调度器没理由把它分出去。
+    constexpr uint32_t kCount = 1u << 16;
+    std::atomic<uint64_t> sink{ 0 };
+    tasks.parallelForRanges(
+            kCount,
+            [&](uint32_t begin, uint32_t end, uint32_t thread_index) {
+                uint64_t local = 0;
+                for (uint32_t index = begin; index < end; ++index) {
+                    local += static_cast<uint64_t>(index) * index;
+                }
+                sink.fetch_add(local, std::memory_order_relaxed);
+                hits[thread_index].fetch_add(end - begin, std::memory_order_relaxed);
+            },
+            ParallelForOptions{ .min_range = 512 });
+
+    uint32_t distinct = 0;
+    uint32_t covered = 0;
+    for (const auto& slot: hits) {
+        const uint32_t value = slot.load(std::memory_order_relaxed);
+        if (value > 0) {
+            ++distinct;
+            covered += value;
+        }
+    }
+    // 注意 workerCount() 是**实际**建出来的 worker 数：配置里的 0 表示「enkiTS 自己定」，
+    // 不是「没有 worker」。所以这里只有在机器真的只有一个核时才会走单线程那一支。
+    const uint32_t workers = tasks.workerCount();
+    TaskSystem::shutdown();
+
+    int failures = 0;
+    if (!require(covered == kCount, "所有分片加起来应该正好覆盖 " + std::to_string(kCount) +
+                                    "，实际 " + std::to_string(covered))) {
+        ++failures;
+    }
+    if (workers == 0) {
+        // 单核机器上只有调用线程，见过一个下标才是正确行为 —— 跳过而不是失败。
+        if (!require(distinct == 1, "没有 worker 时只该有一个线程跑过")) {
+            ++failures;
+        }
+        return failures == 0 ? 0 : 1;
+    }
+    if (!require(distinct >= 2,
+                "parallelFor 应该被至少两个不同线程跑过，实际只有 " + std::to_string(distinct) +
+                        " 个（worker_count=" + std::to_string(worker_count) + "，实际 worker " +
+                        std::to_string(workers) + "）")) {
+        ++failures;
+    }
+    return failures == 0 ? 0 : 1;
+}
+
 int run() {
     if (testGetBeforeInit() != 0) {
         return 1;
@@ -631,6 +802,22 @@ int run() {
         return 1;
     }
     if (testExternalThreadWithoutSlot() != 0) {
+        return 1;
+    }
+    if (testGraphBuildDoesNotRun() != 0) {
+        return 1;
+    }
+    if (testGraphDiamond() != 0) {
+        return 1;
+    }
+    if (testGraphPinnedUpload() != 0) {
+        return 1;
+    }
+    if (testReallyRunsOnMultipleThreads(4) != 0) {
+        return 1;
+    }
+    // 默认配置（worker_count = 0 → enkiTS 自己定线程数）也要过这一条。
+    if (testReallyRunsOnMultipleThreads(0) != 0) {
         return 1;
     }
 

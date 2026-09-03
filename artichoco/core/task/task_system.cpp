@@ -145,6 +145,11 @@ TaskHandle TaskSystem::submitImpl(std::function<void()> function, TaskPriority p
     return launch(std::move(task));
 }
 
+TaskHandle TaskSystem::submit(TaskGraph&& graph)
+{
+    return graph.submitTo(*m_scheduler, *m_pool);
+}
+
 TaskHandle TaskSystem::submitPinnedImpl(uint32_t thread_index, std::function<void()> function)
 {
     if (thread_index >= threadCount()) {
