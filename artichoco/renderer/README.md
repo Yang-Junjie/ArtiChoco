@@ -84,26 +84,5 @@ Vulkan acquire.
 
 ## Verification
 
-`examples/test_app` provides the retained renderer smoke coverage:
-
-- `--smoke-nvrhi`: resource upload/release, GPU mipmap readback, Slang
-  reflection, cubemap-face attachment readback, clear/present, and resize;
-- `--smoke-render`: compute, MRT graphics, exception recovery, resize, and scene/
-  project integration.
-- `vulkan_frame_policy_smoke`: deterministic minimize, resize, out-of-date, and
-  suboptimal swapchain policy coverage.
-
-The old Vulkan-only showcase and hello-triangle implementations were removed.
-The replacement `examples/graphic_examples` programs all use the Application +
-Layer + `RenderPass` structure, NVRHI resources and commands, and Slang SPIR-V
-compilation/reflection:
-
-- `hello_triangle`: the minimal NVRHI graphics pipeline;
-- `hello_cube`: indexed geometry, push constants, an sRGB texture, GPU mipmaps,
-  and reflected texture/sampler bindings;
-- `basic_lighting`: normal-based directional and Blinn-Phong lighting, `D32`
-  depth, and an HDR offscreen/present pass pair;
-- `instancing`: 225 animated cubes in one indexed draw with per-instance vertex
-  data and per-back-buffer depth attachments;
-- `render_to_texture`: a procedural 512 by 512 render target sampled on a
-  depth-tested cube in a second pass.
+In-tree renderer smoke used to live in `examples/test_app`. That example was
+removed; coverage now lives in the engine-side editor / player, not in ArtiChoco.
