@@ -30,6 +30,16 @@ public:
 
     void destroyEntity(Entity entity);
 
+    // 复制 entity **连同它整棵子树**，返回新的根。
+    //
+    // - 每个副本拿一个新 UUID：身份归场景所有，不能跟着拷。
+    // - 新根的父级和源一致，所以副本是源的**兄弟**；子树内部的父子关系重映射到副本上。
+    // - 只有 `registerComponentCopy<T>()` 注册过的组件会被复制 —— 和 Play 模式的快照
+    //   同一份注册表。漏注册的类型会记一条 warn，不会崩（副本缺那些字段）。
+    //
+    // 名字原样照抄，不做「Cube (1)」那种消歧 —— 那是编辑器的策略，不是场景的语义。
+    Entity duplicateEntity(Entity entity);
+
     Entity findEntity(core::UUID id) noexcept;
     Entity findEntityByTag(std::string_view tag) noexcept;
 

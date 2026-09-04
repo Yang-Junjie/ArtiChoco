@@ -74,4 +74,24 @@ void SceneCloner::clone(const Scene& source, Scene& destination) {
             entity_map.size(), skipped_component_types);
 }
 
+size_t SceneCloner::copyComponents(
+        entt::registry& registry, entt::entity source, entt::entity destination) {
+    size_t skipped = 0;
+    // 遍历 registry 的 storage 列表期间往里 emplace 是安全的：只对 source 已经有的类型
+    // 下手，那些类型的 storage 必然已经存在，所以不会新增 storage、列表不会变。
+    // 哪天这里改成「给副本补一个源上没有的组件」，这条前提就没了。
+    for (const auto& [id, storage]: registry.storage()) {
+        if (id == entt::type_hash<entt::entity>::value() || !storage.contains(source)) {
+            continue;
+        }
+        const auto found = copyRegistry().find(id);
+        if (found == copyRegistry().end()) {
+            ++skipped;
+            continue;
+        }
+        found->second(registry, registry, source, destination);
+    }
+    return skipped;
+}
+
 } // namespace arti::scene
