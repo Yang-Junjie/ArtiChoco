@@ -98,7 +98,8 @@ private:
 
     bool commitOutputs(const std::filesystem::path& normalized_source,
             const AssetImporter& importer, const AssetSettings& stored,
-            const ResolvedSettings& resolved, std::vector<AssetImportOutput>& outputs);
+            const ResolvedSettings& resolved, const SourceFingerprint& fingerprint,
+            std::vector<AssetImportOutput>& outputs);
     // plan 阶段：跑 prescan 收集跨源引用与设置推断，裁决冲突。
     void collectInferences(ReconcilePlan& plan,
             const std::unordered_set<std::string>& real_files) const;

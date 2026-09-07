@@ -36,8 +36,7 @@ struct AssetSettings final {
     bool operator==(const AssetSettings&) const = default;
 };
 
-// 源文件指纹。当前只写不读 —— 变更检测排在多线程之后，先把槽位留出来，
-// 避免那时再做一次格式变更。
+// 源文件指纹。使用稳定的 FNV-1a 64 哈希，写进 sidecar 后由 reconcile 比较。
 struct SourceFingerprint final {
     uint64_t content_hash{ 0 };
     uint64_t size{ 0 };
@@ -73,7 +72,7 @@ struct SourceMetadata final {
     ImporterStamp importer;
     AssetSettings settings;
     // 解析后有效设置的哈希（不是 Authored 的哈希）—— 这样在代码里改一个默认值
-    // 也能让依赖它的资产失效。目前只写不读，与 fingerprint 一起等变更检测。
+    // 也能让依赖它的资产失效。
     uint64_t settings_hash{ 0 };
     std::vector<AssetRecord> assets;
 

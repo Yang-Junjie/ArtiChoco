@@ -60,8 +60,7 @@ public:
     virtual std::vector<std::string> getSupportedExtensions() const = 0;
     // 写进 sidecar 的 Importer.Name。
     virtual std::string getName() const = 0;
-    // 写进 sidecar 的 Importer.Version。改了导入算法就 bump。
-    // 目前只写不读 —— 变更检测排在多线程之后。
+    // 写进 sidecar 的 Importer.Version。改了导入算法就 bump；reconcile 会据此重导。
     virtual uint32_t getVersion() const { return 1; }
 
     // 这个 importer 支持哪些导入设置。schema 是权威：解析后每个键都保证存在

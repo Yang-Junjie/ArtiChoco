@@ -269,6 +269,13 @@ AssetImportResult AssetManager::import(const std::filesystem::path& source_path,
         return result;
     }
 
+    const auto fingerprint = m_storage.sourceFingerprint(normalized_source);
+    if (!fingerprint) {
+        result.error = "failed to fingerprint the source file";
+        getLogChannel().error("Cannot import '{}': {}", normalized_source.string(), result.error);
+        return result;
+    }
+
     // 沿用上一份 sidecar 的设置（Authored 是用户数据），解析成有效值再交给 importer。
     AssetSettings stored;
     if (const auto previous = m_storage.readMetadata(normalized_source)) {
@@ -296,7 +303,7 @@ AssetImportResult AssetManager::import(const std::filesystem::path& source_path,
 
     if (result) {
         if (!commitOutputs(normalized_source, *entry->importer, stored, settings,
-                    result.outputs)) {
+                    *fingerprint, result.outputs)) {
             result.error = "failed to commit the import outputs";
         }
     } else {
@@ -310,16 +317,20 @@ AssetImportResult AssetManager::import(const std::filesystem::path& source_path,
 // 才写 sidecar。中途失败不留半套 —— 旧 sidecar 保持原样，下一轮 reconcile 重试。
 bool AssetManager::commitOutputs(const std::filesystem::path& normalized_source,
         const AssetImporter& importer, const AssetSettings& stored,
-        const ResolvedSettings& resolved, std::vector<AssetImportOutput>& outputs) {
+        const ResolvedSettings& resolved, const SourceFingerprint& fingerprint,
+        std::vector<AssetImportOutput>& outputs) {
     SourceMetadata sidecar;
     sidecar.version = kSourceMetadataVersion;
     sidecar.source_path = normalized_source;
     sidecar.importer.name = importer.getName();
     sidecar.importer.version = importer.getVersion();
-    // 指纹槽位：只写不读，给以后的源变更检测留位置，避免二次格式变更。
-    if (const auto size = m_storage.sourceSize(normalized_source)) {
-        sidecar.fingerprint.size = *size;
+    const auto current_fingerprint = m_storage.sourceFingerprint(normalized_source);
+    if (!current_fingerprint || *current_fingerprint != fingerprint) {
+        getLogChannel().error("Source '{}' changed while it was being imported",
+                normalized_source.string());
+        return false;
     }
+    sidecar.fingerprint = fingerprint;
 
     // 原样写回 Authored/Inferred —— 解析后的有效值绝不能写进 Authored，
     // 否则"键存在"这个信号就被污染了，下次推断再也无法生效。
@@ -482,6 +493,25 @@ ReconcilePlan AssetManager::planReconcile() const {
                     item.action = ReconcileAction::Reimport;
                     item.reason = "missing artifact: " + asset.artifact_path.generic_string();
                     break;
+                }
+            }
+
+            if (item.action == ReconcileAction::Current) {
+                const AssetImporter* importer = importerFor(item.source_path);
+                const auto sidecar = m_storage.readMetadata(item.source_path);
+                const auto fingerprint = m_storage.sourceFingerprint(item.source_path);
+                if (importer == nullptr || !sidecar || !fingerprint) {
+                    plan.traversal_error =
+                            "failed to inspect source metadata: " + item.source_path.string();
+                    return plan;
+                }
+                if (sidecar->importer.name != importer->getName() ||
+                        sidecar->importer.version != importer->getVersion()) {
+                    item.action = ReconcileAction::Reimport;
+                    item.reason = "importer changed";
+                } else if (sidecar->fingerprint != *fingerprint) {
+                    item.action = ReconcileAction::Reimport;
+                    item.reason = "source content changed";
                 }
             }
         }

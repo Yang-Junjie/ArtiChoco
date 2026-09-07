@@ -2,6 +2,7 @@
 
 #include "asset_log.h"
 
+#include <array>
 #include <chrono>
 #include <fstream>
 #include <iterator>
@@ -9,6 +10,16 @@
 
 namespace arti::asset {
 namespace {
+
+constexpr uint64_t kFnvOffset = 0xCBF29CE484222325ULL;
+constexpr uint64_t kFnvPrime = 0x100000001B3ULL;
+
+void updateFnv1a(uint64_t& hash, const char* data, size_t size) {
+    for (size_t index = 0; index < size; ++index) {
+        hash ^= static_cast<unsigned char>(data[index]);
+        hash *= kFnvPrime;
+    }
+}
 
 bool readFile(const std::filesystem::path& file, std::string& contents) {
     std::ifstream input{ file, std::ios::binary };
@@ -307,6 +318,36 @@ std::optional<uint64_t> AssetStorage::sourceSize(const std::filesystem::path& re
         return std::nullopt;
     }
     return size;
+}
+
+std::optional<SourceFingerprint> AssetStorage::sourceFingerprint(
+        const std::filesystem::path& relative_path) const {
+    const auto file = resolveSourcePath(relative_path);
+    if (!file) {
+        return std::nullopt;
+    }
+
+    std::ifstream input{ *file, std::ios::binary };
+    if (!input.is_open()) {
+        return std::nullopt;
+    }
+
+    SourceFingerprint fingerprint;
+    fingerprint.content_hash = kFnvOffset;
+    std::array<char, 64 * 1024> buffer{};
+    while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize count = input.gcount();
+        if (count > 0) {
+            updateFnv1a(fingerprint.content_hash, buffer.data(),
+                    static_cast<size_t>(count));
+            fingerprint.size += static_cast<uint64_t>(count);
+        }
+    }
+    if (!input.eof()) {
+        return std::nullopt;
+    }
+    return fingerprint;
 }
 
 bool AssetStorage::writeArtifact(const std::filesystem::path& relative_path,

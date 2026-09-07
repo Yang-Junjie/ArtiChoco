@@ -11,9 +11,8 @@ bool AssetImporter::hasCurrentFiles(const AssetMetadata& metadata) const {
         return false;
     }
 
-    // 注意：只检查文件是否存在，不检查源文件内容有没有变 —— sidecar 里的
-    // ContentHash 目前只写不读（变更检测排在多线程之后）。所以 importer 不能
-    // 依赖它来决定"能否跳过重新编码"，除非源变更检测做完。
+    // 这里只检查文件和 artifact 是否存在。源内容和 importer 版本的变更由
+    // AssetManager::planReconcile() 在导入前统一判断。
     return m_storage->hasSource(AssetStorage::metadataPathFor(metadata.source_path)) &&
             m_storage->hasArtifact(metadata.artifact_path);
 }

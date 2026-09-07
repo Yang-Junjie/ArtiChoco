@@ -83,6 +83,8 @@ public:
     bool hasSource(const std::filesystem::path& relative_path) const;
     bool hasArtifact(const std::filesystem::path& relative_path) const;
     std::optional<uint64_t> sourceSize(const std::filesystem::path& relative_path) const;
+    std::optional<SourceFingerprint> sourceFingerprint(
+            const std::filesystem::path& relative_path) const;
 
     std::optional<std::filesystem::path> resolveSourcePath(
             const std::filesystem::path& relative_path) const;

@@ -93,7 +93,7 @@ apply 的顺序：Engine provider 补齐 → 按 plan 重建 catalog User 集合
 Version: 2
 Source:
   Path: Model/DamagedHelmet/DamagedHelmet.gltf
-  ContentHash: 0          # 槽位已留，目前只写不读
+  ContentHash: 14695981039346656037
   Size: 4537
 Importer:
   Name: artiengine.GltfImporter
@@ -117,7 +117,7 @@ Assets:
 
 `local_id` **优先用源文件里的稳定名字**（glTF 的 mesh/material name、OBJ 的 shape/mtl 名），只在无名时回退下标：下标是位置相关的，在 glTF 里插入一个 mesh 会让同一个 UUID 指向另一块几何 —— 不报错，只是渲染不对。重名时追加 `#N`（那几个之间仍然位置相关，importer 单方面解决不了）。
 
-`ContentHash` / `Size` / `Importer.Version` **目前只写不读**，是给源内容变更检测留的槽位（排在多线程之后）。所以现在**只有 artifact 缺失才触发重导**，改了源文件内容不会 —— 必须手动重导。
+`ContentHash` / `Size` / `Importer.Name` / `Importer.Version` 会在 `planReconcile()` 中参与变更检测。源文件内容或 importer 发生变化时会自动安排重导；导入期间源文件再次变化则不会提交这次导入。
 
 `ResolvedHash` 是真正被读的：推断变了它就变，从而触发重导。
 
@@ -302,7 +302,6 @@ BaseColorTexture: Model/foo.gltf#texture.albedo            # 容器子资产
 
 ## 明确未做
 
-- **源内容变更检测** —— `ContentHash` 只写不读。改了源文件内容不会自动重导，必须手动。对 `.artimaterial` 尤其突出（Extract 的意义就是让人改它）
 - **多线程** —— reconcile 全程同步单线程。接缝已留：`scan()` 纯读、无共享写，将来换 `parallelFor` 语义不变
 - **rename / delete** —— 在文件管理器里改名会让旧 UUID 变孤儿被回收、新文件拿到新 UUID，场景引用静默失效。变通办法是**连 `.meta` 一起改名**
 - **`uid://`** —— Godot 那套路径无关引用
