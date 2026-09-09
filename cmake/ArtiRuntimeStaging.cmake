@@ -23,10 +23,16 @@ function(artichoco_stage_libraries target)
     endif()
 
     if(WIN32)
+        # 参数顺序是 -t <目标目录> <文件...>，**不能写成 <文件...> <目标目录>**：只链静态库的
+        # exe（physics_smoke / lua_vm_smoke / task_system_test / scene_duplicate_test）的
+        # $<TARGET_RUNTIME_DLLS> 展开成空，COMMAND_EXPAND_LISTS 把这个空参数整个抹掉，后一种
+        # 写法就只剩目标目录一个参数，cmake -E copy_if_different 判为参数不足、打一串 usage
+        # 再退出 1 —— 症状是 ninja 报链接失败，而链接本身是好的。-t 形式下空列表就是「零个
+        # 源文件」，是合法的空操作。
         add_custom_command(TARGET "${target}" POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "$<TARGET_RUNTIME_DLLS:${target}>"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different -t
                 "$<TARGET_FILE_DIR:${target}>"
+                "$<TARGET_RUNTIME_DLLS:${target}>"
             COMMAND_EXPAND_LISTS
             VERBATIM
         )
