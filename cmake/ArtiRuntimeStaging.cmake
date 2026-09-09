@@ -49,8 +49,9 @@ function(artichoco_stage_libraries target)
     else()
         # 只给**不在默认搜索路径上**的依赖目录加 rpath。CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES
         # 是链接器本来就搜的目录（/usr/lib 等），给它们写 rpath 只是噪声。
+        # 名单里只有 external 那两个：vendored 的（SDL3 / glm / spdlog / …）是静态库，编进产物
+        # 就没有「运行时去哪找」的问题 —— 这正是把它们 vendored 的收益之一。
         foreach(_arti_runtime_library
-            "${_arti_sdl3_library_release}"
             "${_arti_slang_library_release}"
             "${_arti_vulkan_library}"
         )

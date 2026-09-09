@@ -1,14 +1,15 @@
 include_guard(GLOBAL)
 
-# 第三方依赖的统一查找策略。
+# **external 依赖**的统一查找策略（vendored 的不用它 —— 那些走 add_subdirectory，见
+# ArtiDependencies.cmake 的说明）。
 #
-# 每个依赖都按**同一个顺序**找：显式缓存变量 → Vulkan SDK 前缀 → CMake 默认搜索路径。
+# 每个 external 依赖都按**同一个顺序**找：显式缓存变量 → Vulkan SDK 前缀 → CMake 默认搜索路径。
 # 用 HINTS 而不是 NO_DEFAULT_PATH 来表达「优先但不排斥」：HINTS 排在默认路径之前，所以
 # Windows 上仍然先命中 SDK 里那一份（解析结果与改动前逐字一致），而 Linux 上 SDK 里没有的
-# 依赖（SDL3 / glm）自然回落到发行版的包。
+# 依赖自然回落到发行版的包。
 #
-# 为什么不是「要么全在 SDK 里、要么全走系统」：Windows 的 LunarG SDK 四样都带，Linux 的
-# LunarG SDK 只带 vulkan + slang —— 一刀切会让 Linux 永远走不进去。
+# 为什么 SDK 只是「前缀」而不是「依赖容器」：Windows 的 LunarG SDK 带 vulkan + slang，
+# Linux 的也只带这两个 —— 一刀切会让「不用 SDK」这件事永远做不到。
 
 set(ARTI_VULKAN_SDK "" CACHE PATH "Vulkan SDK installation prefix")
 if(NOT ARTI_VULKAN_SDK AND NOT "$ENV{VULKAN_SDK}" STREQUAL "")

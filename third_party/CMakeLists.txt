@@ -58,3 +58,42 @@ set_target_properties(yaml-cpp PROPERTIES FOLDER "ThirdParty")
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(yaml-cpp PUBLIC -Wno-ignored-attributes)
 endif()
+
+# SDL3：窗口 / 输入 / Vulkan surface。**vendored 而不是系统包**（见
+# docs/Architecture/Dependencies.md 的判据）：
+#   - 它是引擎的窗口系统，版本漂移会改变输入 / IME / 窗口行为，而发行版各有各的版本；
+#   - 静态链进产物之后，发布出去的播放器少一个运行时依赖（Linux 不再要 libSDL3.so，
+#     Windows 不再要 SDL3.dll）；
+#   - 它不碰驱动，只碰 OS 的窗口 API，所以「自己编」不会引入和驱动不一致的风险。
+#
+# SDL_SHARED=OFF + SDL_STATIC=ON：只编静态库。它自己的 CMakeLists 会把 `SDL3::SDL3`
+# 别名指到 static（见上游第 504～506 行），所以契约目标跟着它走就行。
+# 头文件在 Windows 上的 declspec 只在 DLL_EXPORT（共享构建的私有定义）下才有值，
+# 静态消费方不需要额外定义。
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(SDL3 EXCLUDE_FROM_ALL)
+set_target_properties(SDL3-static PROPERTIES FOLDER "ThirdParty")
+
+# 契约目标。**不用 `add_library(ArtiSDK::SDL3 ALIAS SDL3::SDL3)`** —— CMake 不允许
+# 给 alias 再起 alias（实测报 "cannot create ALIAS target ... is itself an ALIAS"），
+# 而且夹一层 INTERFACE 之后，将来要在契约上加编译定义 / 修正 usage requirement 不用动消费方。
+add_library(arti_sdk_sdl3 INTERFACE)
+add_library(ArtiSDK::SDL3 ALIAS arti_sdk_sdl3)
+target_link_libraries(arti_sdk_sdl3 INTERFACE SDL3::SDL3)
+
+# glm：纯头数学库。vendored 的理由是「零编译代价 + 版本固定」—— 它不碰 OS、不碰驱动，
+# 放给机器只会让「同一份代码在不同发行版上算出不同的默认行为」这件事变得可能。
+# GLM_BUILD_LIBRARY=OFF 要的是 INTERFACE target（glm::glm），不是它可选的那个编译产物。
+set(GLM_BUILD_LIBRARY OFF CACHE BOOL "" FORCE)
+set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(glm EXCLUDE_FROM_ALL)
+
+add_library(arti_sdk_glm INTERFACE)
+add_library(ArtiSDK::GLM ALIAS arti_sdk_glm)
+target_link_libraries(arti_sdk_glm INTERFACE glm::glm)
