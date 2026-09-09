@@ -1,4 +1,5 @@
 #include "application.h"
+#include "io/paths.h"
 #include "log.h"
 #include "task/task_system.h"
 
@@ -46,11 +47,24 @@ void shutdownTaskSystem() noexcept {
         // There is no recovery action to take while the process is exiting.
     }
 }
+
+// 日志落在 **exe 旁边**，不是 argv[0] 的旁边。从 PATH 启动时 argv[0] 可能只是个文件名，
+// 于是日志会掉进当前工作目录；从文件管理器拖文件启动时更不可控。Linux 上 `arti_player`
+// 通常就是这么起来的，所以这不是理论问题。
+//
+// 取不到 exe 路径时才退回 argv[0]：那条路上没有更好的选择，而丢日志比丢进程好。
+std::filesystem::path logPath(int argc, char** argv) {
+    try {
+        return arti::core::executableDir() / "logs/ArtiChoco.log";
+    } catch (const std::exception&) {
+        const std::filesystem::path executable_path{ argc > 0 ? argv[0] : "" };
+        return executable_path.parent_path() / "logs/ArtiChoco.log";
+    }
+}
 } // namespace
 
 int main(int argc, char** argv) {
-    const std::filesystem::path executable_path{ argc > 0 ? argv[0] : "" };
-    const auto log_path = executable_path.parent_path() / "logs/ArtiChoco.log";
+    const auto log_path = logPath(argc, argv);
     int exit_code = EXIT_FAILURE;
 
     try {

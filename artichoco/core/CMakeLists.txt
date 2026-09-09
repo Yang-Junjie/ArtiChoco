@@ -38,9 +38,8 @@ if(BUILD_TESTING)
     target_link_libraries(task_system_test PRIVATE artichoco_core)
     set_target_properties(task_system_test PROPERTIES FOLDER "Tests/ArtiChoco")
     add_test(NAME task_system_test COMMAND task_system_test)
-    # 一个 DLL 都不链，所以不用 stage Vulkan SDK。CRT 那套还是要的 —— 但 ArtiMsvcRuntime
-    # 是上游（ArtiEngine）include 进来的，ArtiChoco 单独构建时没有它。
-    if(COMMAND artichoco_stage_msvc_runtime)
-        artichoco_stage_msvc_runtime(task_system_test)
-    endif()
+    # 一个共享库都不链（Windows 上 CRT 还是要的）。以前这里得先 if(COMMAND ...) 探一下 ——
+    # ArtiMsvcRuntime 是上游 include 进来的，ArtiChoco 单独构建时没有它；现在 staging 属于
+    # ArtiChoco 自己的 ArtiDependencies 模块，无条件可用。
+    artichoco_stage_libraries(task_system_test)
 endif()

@@ -7,8 +7,8 @@
 #include <iterator>
 #include <limits>
 #include <mutex>
-#include <slang/slang-com-ptr.h>
-#include <slang/slang.h>
+#include <slang-com-ptr.h>
+#include <slang.h>
 #include <stdexcept>
 #include <string_view>
 

@@ -22,6 +22,18 @@ set(NVRHI_WITH_AFTERMATH OFF CACHE BOOL "" FORCE)
 set(NVRHI_WITH_RTXMU OFF CACHE BOOL "" FORCE)
 add_subdirectory(nvrhi EXCLUDE_FROM_ALL)
 
+# **补上 nvrhi 漏掉的一条依赖。** nvrhi 的 CMakeLists 里 `nvrhi_vk` 只链了 Vulkan 头，
+# 但它的 .o 引用 `nvrhi` 里的符号（verifyPermanentResourceState、AftermathCrashDumpHelper…
+# 都在 src/common/*.cpp，属于 `nvrhi`）。MSVC 的链接器不在乎静态库的先后顺序，所以上游没暴露；
+# GNU ld 是按命令行顺序一遍扫过的，`nvrhi` 排在 `nvrhi_vk` 前面就会得到一堆 undefined reference。
+#
+# 在消费方补，而不是改 submodule 里的 nvrhi：改上游会在每次升级时冲突，而这个事实是
+# 「我们怎么用 nvrhi」的一部分。INTERFACE 方向才是对的 —— 谁链了 nvrhi_vk，谁就在它后面
+# 拿到 nvrhi。
+if(TARGET nvrhi_vk AND TARGET nvrhi)
+    target_link_libraries(nvrhi_vk INTERFACE nvrhi)
+endif()
+
 add_library(artichoco_entt INTERFACE)
 add_library(EnTT::EnTT ALIAS artichoco_entt)
 target_include_directories(artichoco_entt SYSTEM INTERFACE

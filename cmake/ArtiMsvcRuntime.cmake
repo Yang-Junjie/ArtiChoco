@@ -2,6 +2,10 @@ include_guard(GLOBAL)
 
 # MSVC CRT 的可再分发 DLL。
 #
+# 这是 staging 的一个**平台专属实现细节**：调用方（exe / 测试）只调 artichoco_stage_libraries()，
+# 由 ArtiRuntimeStaging.cmake 在 WIN32 分支里调这里的 artichoco_stage_msvc_runtime()。
+# 本模块负责两件事：发现 CRT redist 目录、把它拷到 target 旁边。非 Windows 上整个模块是空操作。
+#
 # 为什么需要它：产物用动态 CRT（/MD），所以运行时要 msvcp140.dll / vcruntime140.dll 那几个。
 # 它们**不是 Windows 自带的** —— 靠 VC++ Redistributable，而 api-ms-win-crt-*（UCRT）才是系统
 # 自带的。$<TARGET_RUNTIME_DLLS> 也拿不到它们（CRT 不是 CMake target）。不带上就是「在装过
@@ -19,9 +23,8 @@ set(ARTI_MSVC_REDIST_DIR "" CACHE PATH
     "Microsoft.VC<n>.CRT redistributable directory (auto-detected from Visual Studio)")
 
 if(NOT WIN32)
-    # 非 Windows 上 CRT 这个概念不存在，函数留成空操作，调用方不必加 if。
-    function(artichoco_stage_msvc_runtime target)
-    endfunction()
+    # CRT 这个概念在非 Windows 上不存在。不留空操作桩：唯一的调用点在 WIN32 分支里，
+    # 留着反而让人以为「谁都可以调」。
     return()
 endif()
 
@@ -87,8 +90,8 @@ else()
         "Set -DARTI_MSVC_REDIST_DIR=<path-to-Microsoft.VCxxx.CRT> to fix.")
 endif()
 
-# 把 CRT 的可再分发 DLL 拷到 target 旁边。和 artichoco_stage_vulkan_sdk_runtime() 一个形状：
-# 由消费方 exe 调用。找不到 CRT 时是空操作（上面已经警告过了）。
+# 把 CRT 的可再分发 DLL 拷到 target 旁边。**调用方是 artichoco_stage_libraries()，不是各个 exe**
+# —— exe 那边只有一个 staging 入口。找不到 CRT 时是空操作（上面已经警告过了）。
 function(artichoco_stage_msvc_runtime target)
     if(NOT TARGET "${target}")
         message(FATAL_ERROR "Cannot stage the MSVC runtime for unknown target: ${target}")
